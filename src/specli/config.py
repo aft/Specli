@@ -415,6 +415,7 @@ def resolve_credential(source: str) -> str:
     Supported formats:
         - ``"env:VAR_NAME"`` -- reads ``os.environ["VAR_NAME"]``
         - ``"file:/path/to/file"`` -- reads file content, stripped of whitespace
+        - ``"plain:VALUE"`` -- uses the literal value directly
         - ``"prompt"`` -- prompts user interactively (requires a TTY)
         - ``"store:PROFILE"`` -- reads from credential store for the named profile
         - ``"keyring:service:account"`` -- reads from system keyring (requires plugin)
@@ -470,5 +471,8 @@ def resolve_credential(source: str) -> str:
 
     if source.startswith("keyring:"):
         raise ConfigError("Keyring support requires the keyring plugin")
+
+    if source.startswith("plain:"):
+        return source[6:]
 
     raise ConfigError(f"Unknown credential source format: {source}")

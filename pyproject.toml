@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "specli"
+version = "0.1.0"
+description = "Generate Typer CLI commands from OpenAPI 3.0/3.1 specs"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Cem Baspinar" },
+]
+keywords = ["openapi", "cli", "typer", "code-generation", "api"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Code Generators",
+]
+dependencies = [
+    "typer>=0.9.0",
+    "httpx>=0.25.0",
+    "pydantic>=2.0.0",
+    "rich>=13.0.0",
+    "diskcache>=5.6.0",
+    "jinja2>=3.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
+]
+build = ["pyinstaller>=6.0.0"]
+keyring = ["keyring>=24.0.0"]
+jwt = ["pyjwt>=2.0.0"]
+
+[project.scripts]
+specli = "specli.app:main"
+
+[project.entry-points."specli.plugins"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/specli"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100

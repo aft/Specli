@@ -1,0 +1,38 @@
+# {{ title }} — API Reference
+
+{% for op in operations %}
+## {{ op.method | upper }} {{ op.path }}
+
+{{ op.summary }}
+
+{{ op.description }}
+
+{% if op.parameters %}
+### Parameters
+
+| Name | Location | Type | Required | Description |
+|------|----------|------|----------|-------------|
+{% for param in op.parameters %}
+| `{{ param.name }}` | {{ param.location.value }} | {{ param.schema_type }} | {{ "Yes" if param.required else "No" }} | {{ param.description or "-" }} |
+{% endfor %}
+{% endif %}
+
+{% if op.request_body %}
+### Request Body
+
+{{ op.request_body.description or "JSON request body required." }}
+
+Content types: {{ op.request_body.content_types | join(", ") }}
+{% endif %}
+
+{% if op.responses %}
+### Responses
+
+{% for resp in op.responses %}
+- **{{ resp.status_code }}**: {{ resp.description or "No description" }}
+{% endfor %}
+{% endif %}
+
+---
+
+{% endfor %}

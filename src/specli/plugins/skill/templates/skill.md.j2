@@ -1,0 +1,40 @@
+---
+name: {{ name }}
+description: {{ description }}
+---
+
+# {{ title }}
+
+{{ description }}
+
+## Quick Start
+
+```bash
+# Install
+pip install specli
+
+# Initialize
+specli init --spec {{ spec_url }}
+
+# Configure auth
+specli auth login {{ profile_name }}
+```
+
+## Available Commands
+
+{% for group_name, operations in grouped_operations.items() %}
+### {{ group_name }}
+
+{% for op in operations %}
+- `{{ op.command }}` — {{ op.summary }}
+{% endfor %}
+
+{% endfor %}
+
+## Auth Setup
+
+See [auth-setup.md](references/auth-setup.md) for detailed authentication configuration.
+
+## API Reference
+
+See [api-reference.md](references/api-reference.md) for complete endpoint documentation.

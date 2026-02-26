@@ -1,0 +1,1 @@
+"""Example specli plugin."""

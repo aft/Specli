@@ -1,0 +1,54 @@
+# {{ title }} — Auth Setup
+
+{% if security_schemes %}
+This API supports the following authentication methods:
+
+{% for name, scheme in security_schemes.items() %}
+## {{ name }} ({{ scheme.type }})
+
+{{ scheme.description or "" }}
+
+{% if scheme.type == "apiKey" %}
+**Location**: {{ scheme.location or "header" }}
+**Parameter name**: {{ scheme.param_name or name }}
+
+```bash
+# Set up API key auth
+specli auth add {{ profile_name }} --type api_key --header {{ scheme.param_name or name }} --source env:{{ name | upper | replace("-", "_") }}_API_KEY
+```
+{% elif scheme.type == "http" and scheme.scheme == "bearer" %}
+```bash
+# Set up bearer token auth
+specli auth add {{ profile_name }} --type bearer --source env:{{ name | upper | replace("-", "_") }}_TOKEN
+```
+{% elif scheme.type == "http" and scheme.scheme == "basic" %}
+```bash
+# Set up basic auth
+specli auth add {{ profile_name }} --type basic --source env:{{ name | upper | replace("-", "_") }}_CREDENTIALS
+```
+{% elif scheme.type == "oauth2" %}
+**Flows**: {{ scheme.flows.keys() | list | join(", ") if scheme.flows else "Not specified" }}
+
+```bash
+# Set up OAuth2 auth
+specli auth login {{ profile_name }}
+```
+{% elif scheme.type == "openIdConnect" %}
+**Discovery URL**: {{ scheme.openid_connect_url or "Not specified" }}
+
+```bash
+# Set up OpenID Connect auth
+specli auth login {{ profile_name }}
+```
+{% endif %}
+
+{% endfor %}
+{% else %}
+This API does not require authentication.
+{% endif %}
+
+## Testing Auth
+
+```bash
+specli auth test {{ profile_name }}
+```

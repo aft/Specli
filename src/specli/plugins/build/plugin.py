@@ -144,22 +144,49 @@ auth_app = typer.Typer(no_args_is_help=True)
 def auth_test() -> None:
     """Test authentication against the API."""
     from specli.auth import create_default_manager
-    from specli.client.response import format_api_response
+    from specli.client import SyncClient
     from specli.models import Profile
-    from specli.output import error as err, success as ok
+    from specli.output import error as err, info as inf, success as ok
 
     profile = Profile(**_FROZEN_PROFILE)
     if not profile.auth:
         err("No auth configured in this CLI.")
         raise typer.Exit(code=1)
 
+    # Resolve the check endpoint from auth config extras.
+    extras = profile.auth.model_extra or {{}}
+    check_endpoint = extras.get("check_endpoint")
+
+    if not check_endpoint:
+        # No check endpoint -- just verify credentials resolve.
+        am = create_default_manager()
+        try:
+            am.authenticate(profile)
+            ok(f"Credentials OK (type: {{profile.auth.type}}).")
+            inf("No check_endpoint configured -- credentials resolved but not verified against server.")
+        except Exception as exc:
+            err(f"Auth failed: {{exc}}")
+            raise typer.Exit(code=3)
+        return
+
+    # Hit the check endpoint and inspect the status code.
     am = create_default_manager()
     try:
-        result = am.authenticate(profile)
-        ok(f"Auth OK (type: {{profile.auth.type}})")
+        am.authenticate(profile)
     except Exception as exc:
         err(f"Auth failed: {{exc}}")
         raise typer.Exit(code=3)
+
+    with SyncClient(profile=profile, auth_manager=am) as client:
+        response = client.request("GET", check_endpoint)
+        if 200 <= response.status_code < 300:
+            ok(f"Authenticated ({{profile.auth.type}}) -- {{response.status_code}}")
+        elif response.status_code in (401, 403):
+            err(f"Not authenticated -- {{response.status_code}}")
+            raise typer.Exit(code=3)
+        else:
+            err(f"Unexpected status: {{response.status_code}}")
+            raise typer.Exit(code=2)
 
 
 app.add_typer(auth_app, name="auth", help="Authentication.")
@@ -384,27 +411,88 @@ def _load_and_enrich(
     return profile, raw_spec, openapi_version
 
 
+def _load_build_config(profile_name: str) -> dict[str, Any]:
+    """Load the ``build`` section from a profile's JSON, or empty dict.
+
+    This pre-loads the profile just to read the build defaults, before
+    the full enrichment pipeline runs.  Loading a profile is fast (JSON
+    file read) and has no side-effects.
+    """
+    from specli.config import load_profile
+    from specli.exceptions import ConfigError
+
+    try:
+        profile = load_profile(profile_name)
+        return (profile.model_extra or {}).get("build") or {}
+    except ConfigError:
+        return {}
+
+
+def _resolve_build_params(
+    build_cfg: dict[str, Any],
+    *,
+    name: Optional[str],
+    output_dir: Optional[str],
+    cli_version: Optional[str],
+    source_dir: Optional[str],
+    import_strings: Optional[str],
+    export_strings: Optional[str],
+    generate_skill: Optional[str],
+    default_output_dir: str,
+) -> dict[str, Any]:
+    """Merge CLI args with profile ``build`` defaults. CLI wins.
+
+    Uses values from ``build_cfg`` (the ``"build"`` section of a profile)
+    as fallbacks for any CLI parameter that was not explicitly provided
+    (i.e. is ``None``).
+
+    Args:
+        build_cfg: The ``"build"`` dict from the profile, or ``{}``.
+        name: CLI name from ``--name`` flag, or ``None``.
+        output_dir: Output directory from ``--output`` flag, or ``None``.
+        cli_version: Version from ``--cli-version`` flag, or ``None``.
+        source_dir: Source dir from ``--source`` flag, or ``None``.
+        import_strings: Import path from ``--import-strings``, or ``None``.
+        export_strings: Export path from ``--export-strings``, or ``None``.
+        generate_skill: Skill dir from ``--generate-skill``, or ``None``.
+        default_output_dir: Hardcoded default for ``output_dir`` when
+            neither the CLI flag nor the profile provides one.
+
+    Returns:
+        A dict with resolved values for each parameter.
+    """
+    return {
+        "name": name or build_cfg.get("name"),
+        "output_dir": output_dir or build_cfg.get("output_dir") or default_output_dir,
+        "cli_version": cli_version or build_cfg.get("cli_version") or "1.0.0",
+        "source_dir": source_dir or build_cfg.get("source_dir"),
+        "import_strings": import_strings or build_cfg.get("import_strings"),
+        "export_strings": export_strings or build_cfg.get("export_strings"),
+        "generate_skill": generate_skill or build_cfg.get("generate_skill"),
+    }
+
+
 @build_app.command("compile")
 def build_compile(
     profile_name: str = typer.Option(
         ..., "--profile", "-p",
         help="Profile to bake into the binary.",
     ),
-    name: str = typer.Option(
-        ..., "--name", "-n",
-        help="Output binary name (e.g. corelia-cli).",
+    name: Optional[str] = typer.Option(
+        None, "--name", "-n",
+        help="Output binary name (e.g. corelia-cli). Falls back to profile build.name.",
     ),
-    output_dir: str = typer.Option(
-        "./dist", "--output", "-o",
-        help="Output directory for the binary.",
+    output_dir: Optional[str] = typer.Option(
+        None, "--output", "-o",
+        help="Output directory for the binary. [default: ./dist]",
     ),
     onedir: bool = typer.Option(
         False, "--onedir",
         help="Build as a directory bundle instead of a single file.",
     ),
-    cli_version: str = typer.Option(
-        "1.0.0", "--cli-version",
-        help="Version string for the generated CLI.",
+    cli_version: Optional[str] = typer.Option(
+        None, "--cli-version",
+        help="Version string for the generated CLI. [default: 1.0.0]",
     ),
     clean: bool = typer.Option(
         True, "--clean/--no-clean",
@@ -458,9 +546,34 @@ def build_compile(
             specli build compile -p myapi -n myapi-cli --onedir
             specli build compile -p myapi -n myapi-cli --cli-version 2.0.0
     """
-    # 1. Enrichment pipeline (load, enrich, export, skill)
+    # 0. Resolve build defaults from profile (CLI flags take precedence).
+    build_cfg = _load_build_config(profile_name)
+    bp = _resolve_build_params(
+        build_cfg,
+        name=name,
+        output_dir=output_dir,
+        cli_version=cli_version,
+        source_dir=source_dir,
+        import_strings=import_strings,
+        export_strings=export_strings,
+        generate_skill=generate_skill,
+        default_output_dir="./dist",
+    )
+    name = bp["name"]
+    output_dir = bp["output_dir"]
+    cli_version = bp["cli_version"]
+
+    if not name:
+        error("No --name provided and no 'name' in profile build config.")
+        raise typer.Exit(code=1)
+
+    # 1. Enrichment pipeline (load, enrich, export, skill).
     profile, raw_spec, openapi_version = _load_and_enrich(
-        profile_name, source_dir, import_strings, export_strings, generate_skill,
+        profile_name,
+        bp["source_dir"],
+        bp["import_strings"],
+        bp["export_strings"],
+        bp["generate_skill"],
     )
 
     # Exit early if --no-build.
@@ -640,17 +753,17 @@ def build_generate(
         ..., "--profile", "-p",
         help="Profile to bake into the package.",
     ),
-    name: str = typer.Option(
-        ..., "--name", "-n",
-        help="CLI/package name (e.g. corelia-cli).",
+    name: Optional[str] = typer.Option(
+        None, "--name", "-n",
+        help="CLI/package name (e.g. corelia-cli). Falls back to profile build.name.",
     ),
-    output_dir: str = typer.Option(
-        ".", "--output", "-o",
-        help="Directory to create the package in.",
+    output_dir: Optional[str] = typer.Option(
+        None, "--output", "-o",
+        help="Directory to create the package in. [default: .]",
     ),
-    cli_version: str = typer.Option(
-        "1.0.0", "--cli-version",
-        help="Version string for the generated CLI.",
+    cli_version: Optional[str] = typer.Option(
+        None, "--cli-version",
+        help="Version string for the generated CLI. [default: 1.0.0]",
     ),
     source_dir: Optional[str] = typer.Option(
         None, "--source", "-s",
@@ -702,9 +815,34 @@ def build_generate(
             specli build generate --profile corelia --name corelia-cli
             cd corelia-cli && pip install .
     """
+    # 0. Resolve build defaults from profile (CLI flags take precedence).
+    build_cfg = _load_build_config(profile_name)
+    bp = _resolve_build_params(
+        build_cfg,
+        name=name,
+        output_dir=output_dir,
+        cli_version=cli_version,
+        source_dir=source_dir,
+        import_strings=import_strings,
+        export_strings=export_strings,
+        generate_skill=generate_skill,
+        default_output_dir=".",
+    )
+    name = bp["name"]
+    output_dir = bp["output_dir"]
+    cli_version = bp["cli_version"]
+
+    if not name:
+        error("No --name provided and no 'name' in profile build config.")
+        raise typer.Exit(code=1)
+
     # 1. Enrichment pipeline (load, enrich, export, skill)
     profile, raw_spec, openapi_version = _load_and_enrich(
-        profile_name, source_dir, import_strings, export_strings, generate_skill,
+        profile_name,
+        bp["source_dir"],
+        bp["import_strings"],
+        bp["export_strings"],
+        bp["generate_skill"],
     )
 
     # Exit early if --no-build.

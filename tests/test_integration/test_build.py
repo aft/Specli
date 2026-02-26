@@ -418,3 +418,219 @@ class TestEntryTemplate:
 
         # Should compile without SyntaxError
         compile(source, "<test-entry>", "exec")
+
+
+# ---------------------------------------------------------------------------
+# Profile build defaults
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _profile_with_build(isolated_config: Path, tmp_path: Path) -> str:
+    """Write a profile with a ``build`` section and return its name."""
+    profiles_dir = isolated_config / "config" / "specli" / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+
+    spec_path = isolated_config / "petstore.json"
+    with open(FIXTURES_DIR / "petstore_3.0.json") as f:
+        spec_path.write_text(f.read())
+
+    profile = {
+        "name": "build-test",
+        "spec": str(spec_path),
+        "base_url": "http://localhost:8080",
+        "build": {
+            "name": "my-cli",
+            "output_dir": str(tmp_path / "build-output"),
+            "cli_version": "2.5.0",
+            "source_dir": None,
+            "import_strings": None,
+            "generate_skill": None,
+        },
+    }
+    (profiles_dir / "build-test.json").write_text(json.dumps(profile))
+    return "build-test"
+
+
+class TestBuildDefaults:
+    """Tests for reading build defaults from profile ``build`` section."""
+
+    def test_generate_uses_profile_name(
+        self, isolated_config: Path, _profile_with_build: str, tmp_path: Path
+    ) -> None:
+        """Should use build.name from profile when --name is not provided."""
+        result = runner.invoke(
+            app,
+            [
+                "build", "generate",
+                "--profile", _profile_with_build,
+                # No --name flag
+            ],
+        )
+        assert result.exit_code == 0
+        # Package dir should be named after the profile build name
+        build_output = tmp_path / "build-output"
+        assert (build_output / "my-cli").exists()
+
+    def test_generate_cli_flag_overrides_profile(
+        self, isolated_config: Path, _profile_with_build: str, tmp_path: Path
+    ) -> None:
+        """CLI --name should override build.name from profile."""
+        output_dir = tmp_path / "override-output"
+        output_dir.mkdir()
+
+        result = runner.invoke(
+            app,
+            [
+                "build", "generate",
+                "--profile", _profile_with_build,
+                "--name", "override-cli",
+                "--output", str(output_dir),
+            ],
+        )
+        assert result.exit_code == 0
+        assert (output_dir / "override-cli").exists()
+        # Should NOT have created "my-cli"
+        assert not (output_dir / "my-cli").exists()
+
+    def test_generate_version_from_profile(
+        self, isolated_config: Path, _profile_with_build: str, tmp_path: Path
+    ) -> None:
+        """Should use build.cli_version from profile."""
+        result = runner.invoke(
+            app,
+            [
+                "build", "generate",
+                "--profile", _profile_with_build,
+            ],
+        )
+        assert result.exit_code == 0
+
+        build_output = tmp_path / "build-output"
+        cli_source = (build_output / "my-cli" / "src" / "my_cli" / "cli.py").read_text()
+        assert "2.5.0" in cli_source
+
+    def test_generate_missing_name_everywhere_errors(
+        self, isolated_config: Path
+    ) -> None:
+        """Should exit 1 when name is in neither CLI nor profile build config."""
+        # Create a profile without a build section
+        profiles_dir = isolated_config / "config" / "specli" / "profiles"
+        profiles_dir.mkdir(parents=True, exist_ok=True)
+
+        spec_path = isolated_config / "petstore.json"
+        with open(FIXTURES_DIR / "petstore_3.0.json") as f:
+            spec_path.write_text(f.read())
+
+        profile = {
+            "name": "no-build",
+            "spec": str(spec_path),
+            "base_url": "http://localhost:8080",
+        }
+        (profiles_dir / "no-build.json").write_text(json.dumps(profile))
+
+        result = runner.invoke(
+            app,
+            ["build", "generate", "--profile", "no-build"],
+        )
+        assert result.exit_code == 1
+        assert "name" in result.output.lower()
+
+    def test_generate_no_build_section_with_cli_flags(
+        self, isolated_config: Path, _profile_on_disk: str, tmp_path: Path
+    ) -> None:
+        """Profile without build section should work when CLI flags provided."""
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        result = runner.invoke(
+            app,
+            [
+                "build", "generate",
+                "--profile", _profile_on_disk,
+                "--name", "test-cli",
+                "--output", str(output_dir),
+            ],
+        )
+        assert result.exit_code == 0
+        assert (output_dir / "test-cli").exists()
+
+    def test_compile_uses_profile_name(
+        self, isolated_config: Path, _profile_with_build: str, tmp_path: Path
+    ) -> None:
+        """Compile should use build.name from profile when --name not provided."""
+        dist_dir = tmp_path / "build-output"
+        dist_dir.mkdir(parents=True, exist_ok=True)
+        binary = dist_dir / "my-cli"
+        binary.write_bytes(b"\x00" * 1024)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stderr = ""
+        mock_result.stdout = ""
+
+        with (
+            patch("specli.plugins.build.plugin._check_pyinstaller", return_value=True),
+            patch("subprocess.run", return_value=mock_result),
+            patch("shutil.rmtree"),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "build", "compile",
+                    "--profile", _profile_with_build,
+                    # No --name flag; uses profile build.name "my-cli"
+                ],
+            )
+        assert result.exit_code == 0
+        assert "my-cli" in result.output
+
+    def test_resolve_build_params_helper(self) -> None:
+        """Direct test of _resolve_build_params merge logic."""
+        from specli.plugins.build.plugin import _resolve_build_params
+
+        build_cfg = {
+            "name": "profile-name",
+            "output_dir": "/profile/out",
+            "cli_version": "9.0.0",
+            "source_dir": "/profile/src",
+            "import_strings": "/profile/strings.json",
+        }
+
+        # All None — profile wins
+        result = _resolve_build_params(
+            build_cfg,
+            name=None, output_dir=None, cli_version=None,
+            source_dir=None, import_strings=None, export_strings=None,
+            generate_skill=None, default_output_dir="./default",
+        )
+        assert result["name"] == "profile-name"
+        assert result["output_dir"] == "/profile/out"
+        assert result["cli_version"] == "9.0.0"
+        assert result["source_dir"] == "/profile/src"
+        assert result["import_strings"] == "/profile/strings.json"
+
+        # CLI values override profile
+        result = _resolve_build_params(
+            build_cfg,
+            name="cli-name", output_dir="/cli/out", cli_version="1.0.0",
+            source_dir="/cli/src", import_strings="/cli/strings.json",
+            export_strings=None, generate_skill=None,
+            default_output_dir="./default",
+        )
+        assert result["name"] == "cli-name"
+        assert result["output_dir"] == "/cli/out"
+        assert result["cli_version"] == "1.0.0"
+        assert result["source_dir"] == "/cli/src"
+        assert result["import_strings"] == "/cli/strings.json"
+
+        # Empty build_cfg — hardcoded defaults used
+        result = _resolve_build_params(
+            {},
+            name=None, output_dir=None, cli_version=None,
+            source_dir=None, import_strings=None, export_strings=None,
+            generate_skill=None, default_output_dir="./default",
+        )
+        assert result["name"] is None
+        assert result["output_dir"] == "./default"
+        assert result["cli_version"] == "1.0.0"

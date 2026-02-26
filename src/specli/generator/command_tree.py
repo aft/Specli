@@ -325,8 +325,14 @@ def _build_command_function(
         map_parameter_to_typer(p) for p in operation.parameters
     ]
 
-    # Add --body when the operation expects a request body.
-    has_body = operation.request_body is not None
+    # Add --body when the operation expects a request body, or when the
+    # HTTP method typically carries one (POST/PUT/PATCH).  Many specs omit
+    # the requestBody definition even though the endpoint consumes JSON.
+    methods_with_body = {"post", "put", "patch"}
+    has_body = (
+        operation.request_body is not None
+        or operation.method.value in methods_with_body
+    )
     if has_body:
         param_descriptors.append(build_body_option())
 
@@ -334,6 +340,9 @@ def _build_command_function(
     body_content_type: str | None = None
     if operation.request_body and operation.request_body.content_types:
         body_content_type = operation.request_body.content_types[0]
+    elif has_body:
+        # No schema defined but method implies a body — default to JSON.
+        body_content_type = "application/json"
 
     # We need to build a real function object whose signature Typer can
     # inspect.  Typer reads parameter annotations and defaults from the

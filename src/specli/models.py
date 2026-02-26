@@ -149,6 +149,10 @@ class PathRulesConfig(BaseModel):
     collapse: dict[str, str] = Field(
         default_factory=dict, description="Map specific paths to flat command names"
     )
+    include_prefix: Optional[list[str] | str] = Field(
+        default=None,
+        description="Only include paths starting with this prefix (e.g. '/api/' or ['/api/', '/auth/'])",
+    )
 
 
 class RequestConfig(BaseModel):

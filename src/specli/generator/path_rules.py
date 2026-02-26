@@ -63,6 +63,11 @@ def apply_path_rules(paths: list[str], rules: PathRulesConfig) -> dict[str, str]
     if not paths:
         return {}
 
+    # Filter to only include paths matching the prefix, if configured.
+    if rules.include_prefix:
+        prefixes = rules.include_prefix if isinstance(rules.include_prefix, list) else [rules.include_prefix]
+        paths = [p for p in paths if any(p.startswith(pfx) for pfx in prefixes)]
+
     result: dict[str, str] = {}
 
     # Pre-compute the common prefix once (used when auto_strip is enabled

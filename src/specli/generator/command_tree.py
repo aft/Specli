@@ -215,7 +215,9 @@ def _group_operations(
     groups: dict[tuple[str, ...], list[tuple[APIOperation, str]]] = defaultdict(list)
 
     for op in operations:
-        transformed = path_map.get(op.path, op.path)
+        if op.path not in path_map:
+            continue  # Excluded by path rules (e.g. include_prefix).
+        transformed = path_map[op.path]
         parts = tuple(path_to_command_parts(transformed))
         if not parts:
             # Operations that reduce to the root (rare) get a synthetic group.

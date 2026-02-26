@@ -139,7 +139,8 @@ class SyncClient:
             ServerError: On 5xx after all retries are exhausted.
             ConnectionError_: On network / timeout errors after all retries.
         """
-        merged_headers: dict[str, str] = dict(headers or {})
+        merged_headers: dict[str, str] = {"Accept": "application/json"}
+        merged_headers.update(headers or {})
         merged_params: dict[str, Any] = dict(params or {})
 
         # 1. Auth injection

@@ -13,7 +13,7 @@ from typing import Optional
 
 import typer
 
-from specli.output import debug, error, format_response, get_output, info
+from specli.output import error, format_response, get_output, info
 
 
 inspect_app = typer.Typer(no_args_is_help=True)

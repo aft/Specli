@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from specli.exceptions import ConfigError
-from specli.models import AuthConfig, GlobalConfig, Profile
+from specli.models import GlobalConfig, Profile
 
 _APP_NAME = "specli"
 _CONFIG_FILENAME = "config.json"

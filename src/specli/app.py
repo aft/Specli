@@ -21,13 +21,12 @@ import signal
 import sys
 import traceback
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Optional
 
 import typer
 
 from specli import __version__
-from specli.exit_codes import EXIT_GENERIC_FAILURE, EXIT_SUCCESS
+from specli.exit_codes import EXIT_GENERIC_FAILURE
 
 
 app = typer.Typer(

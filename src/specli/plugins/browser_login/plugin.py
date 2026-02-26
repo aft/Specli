@@ -27,7 +27,6 @@ import json
 import socket
 import sys
 import threading
-import time
 import webbrowser
 from datetime import datetime, timezone, timedelta
 from http.cookies import SimpleCookie

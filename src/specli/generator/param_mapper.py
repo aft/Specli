@@ -30,7 +30,7 @@ from typing import Any, Optional
 
 import typer
 
-from specli.models import APIParameter, ParameterLocation, RequestBodyInfo
+from specli.models import APIParameter, ParameterLocation
 
 
 # ---------------------------------------------------------------------------

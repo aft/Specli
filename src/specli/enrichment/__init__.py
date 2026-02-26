@@ -29,10 +29,10 @@ The convenience function :func:`enrich_spec_from_source` combines steps
 from __future__ import annotations
 
 from specli.enrichment.enricher import enrich_raw_spec
-from specli.enrichment.scanner import RouteDoc, SourceScanner
+from specli.enrichment.scanner import RouteDoc as RouteDoc, SourceScanner
 from specli.enrichment.strings import (
-    export_strings_to_file,
-    import_strings_from_file,
+    export_strings_to_file as export_strings_to_file,
+    import_strings_from_file as import_strings_from_file,
 )
 
 

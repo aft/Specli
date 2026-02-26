@@ -25,18 +25,14 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 from enum import Enum
-from typing import Any, Optional, TextIO
+from typing import Any, Optional
 
 from rich.console import Console
-from rich.json import JSON as RichJSON
-from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
-from rich.text import Text
 
 
 class OutputFormat(str, Enum):

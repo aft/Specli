@@ -208,6 +208,7 @@ All credential sources use the format `<type>:<value>`:
 |--------|---------|-------------|
 | `env:VAR` | `env:MY_API_KEY` | Read from environment variable |
 | `file:/path` | `file:~/.token` | Read first line of file |
+| `plain:VALUE` | `plain:sk_abc123` | Literal value embedded in profile |
 | `prompt` | `prompt` | Interactive hidden input |
 | `store:PROFILE` | `store:myapi` | Local credential store |
 | `keyring:svc:acct` | `keyring:myapp:token` | System keyring |
@@ -234,6 +235,25 @@ Injects an API key via header, query parameter, or cookie.
 | `source` | yes | | Credential source |
 | `secret_source` | no | | Second credential for dual-key auth |
 | `secret_header` / `secret_param_name` | no | `X-API-Secret` | Name for the secret key |
+| `check_endpoint` | no | | API path for auth verification (see below) |
+
+**Auth verification (`check_endpoint`):** When set, the generated CLI's `auth test` command makes a real HTTP GET request to this endpoint to verify credentials work. A 2xx response means authentication succeeded; 401/403 means it failed. This replaces the default local-only credential check with a live server round-trip.
+
+```json
+{
+  "auth": {
+    "type": "api_key",
+    "header": "X-API-Key",
+    "source": "plain:my_key_value",
+    "check_endpoint": "/api/settings"
+  }
+}
+```
+
+```bash
+$ mycli auth test
+Auth OK — /api/settings returned 200
+```
 
 #### HTTP Basic (`basic`)
 
@@ -458,6 +478,33 @@ Calls a remote endpoint to provision an API key, then persists and reuses it. Fo
 
 The `build` plugin compiles your API profile into a standalone CLI.
 
+#### Build defaults from profile
+
+Build parameters can be stored in the profile's `build` section so you don't have to repeat flags every time. CLI flags always override profile defaults.
+
+```json
+{
+  "name": "myapi",
+  "spec": "openapi.json",
+  "build": {
+    "name": "myapi",
+    "output_dir": "/tmp/myapi-build",
+    "cli_version": "2.0.0",
+    "import_strings": "/path/to/strings.json",
+    "generate_skill": "/path/to/skill",
+    "source_dir": "/path/to/source"
+  }
+}
+```
+
+With a `build` section configured, a full build becomes:
+
+```bash
+specli build generate -p myapi
+```
+
+Resolution order (highest wins): CLI flag > profile `build` section > hardcoded default.
+
 #### `specli build compile`
 
 Produces a self-contained PyInstaller binary.
@@ -465,7 +512,7 @@ Produces a self-contained PyInstaller binary.
 | Flag | Short | Required | Default | Description |
 |------|-------|----------|---------|-------------|
 | `--profile` | `-p` | yes | | Profile to bake in |
-| `--name` | `-n` | yes | | Output binary name |
+| `--name` | `-n` | no* | | Output binary name |
 | `--output` | `-o` | no | `./dist` | Output directory |
 | `--cli-version` | | no | `1.0.0` | Version string |
 | `--onedir` | | no | `false` | Directory bundle instead of single file |
@@ -476,6 +523,8 @@ Produces a self-contained PyInstaller binary.
 | `--generate-skill` | | no | | Generate skill files to dir |
 | `--no-build` | | no | `false` | Run pipeline only, skip compilation |
 
+*\* Required unless provided in the profile's `build.name` field.*
+
 #### `specli build generate`
 
 Produces a pip-installable Python package.
@@ -483,7 +532,7 @@ Produces a pip-installable Python package.
 | Flag | Short | Required | Default | Description |
 |------|-------|----------|---------|-------------|
 | `--profile` | `-p` | yes | | Profile to bake in |
-| `--name` | `-n` | yes | | Package/CLI name |
+| `--name` | `-n` | no* | | Package/CLI name |
 | `--output` | `-o` | no | `.` | Directory to create package in |
 | `--cli-version` | | no | `1.0.0` | Package version |
 | `--source` | `-s` | no | | Source dir for enrichment |
@@ -492,7 +541,9 @@ Produces a pip-installable Python package.
 | `--generate-skill` | | no | | Generate skill files to dir |
 | `--no-build` | | no | `false` | Run pipeline only, skip generation |
 
-**The generated CLI** has API commands at the top level (no `api` sub-group), an `auth test` command, and all global flags.
+*\* Required unless provided in the profile's `build.name` field.*
+
+**The generated CLI** has API commands at the top level (no `api` sub-group), an `auth test` command (which uses `check_endpoint` if configured), and all global flags.
 
 ---
 
@@ -721,6 +772,20 @@ Configure in your profile's `path_rules` section:
 | `keep` | `[]` | Segments to preserve even if auto-stripped |
 | `skip_segments` | `[]` | Segments to remove from all paths |
 | `collapse` | `{}` | Map specific paths to flat command names |
+| `include_prefix` | | Only include paths starting with this prefix (string or list) |
+
+`include_prefix` is useful when a spec contains non-API paths (HTML pages, webhooks) that shouldn't become CLI commands. It accepts a string or a list:
+
+```json
+{
+  "path_rules": {
+    "strip_prefix": "/api",
+    "include_prefix": "/api/"
+  }
+}
+```
+
+This includes only paths starting with `/api/`, strips the `/api` prefix, and produces clean command names. Paths like `/assets` or `/login` are excluded.
 
 **Example transformations (USPTO spec):**
 

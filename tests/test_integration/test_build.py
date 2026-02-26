@@ -58,13 +58,13 @@ class TestBuildHelp:
         assert "generate" in result.output
 
     def test_build_compile_help(self) -> None:
-        result = runner.invoke(app, ["build", "compile", "--help"])
+        result = runner.invoke(app, ["build", "compile", "--help"], color=False)
         assert result.exit_code == 0
         assert "--profile" in result.output
         assert "--name" in result.output
 
     def test_build_generate_help(self) -> None:
-        result = runner.invoke(app, ["build", "generate", "--help"])
+        result = runner.invoke(app, ["build", "generate", "--help"], color=False)
         assert result.exit_code == 0
         assert "--profile" in result.output
         assert "--name" in result.output

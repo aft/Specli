@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,12 @@ from typer.testing import CliRunner
 from specli.app import app
 
 runner = CliRunner()
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
 
 
 # ---------------------------------------------------------------------------
@@ -58,16 +65,18 @@ class TestBuildHelp:
         assert "generate" in result.output
 
     def test_build_compile_help(self) -> None:
-        result = runner.invoke(app, ["build", "compile", "--help"], color=False)
+        result = runner.invoke(app, ["build", "compile", "--help"])
         assert result.exit_code == 0
-        assert "--profile" in result.output
-        assert "--name" in result.output
+        text = _strip_ansi(result.output)
+        assert "--profile" in text
+        assert "--name" in text
 
     def test_build_generate_help(self) -> None:
-        result = runner.invoke(app, ["build", "generate", "--help"], color=False)
+        result = runner.invoke(app, ["build", "generate", "--help"])
         assert result.exit_code == 0
-        assert "--profile" in result.output
-        assert "--name" in result.output
+        text = _strip_ansi(result.output)
+        assert "--profile" in text
+        assert "--name" in text
 
 
 # ---------------------------------------------------------------------------

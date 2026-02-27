@@ -455,11 +455,25 @@ def _build_command_function(
         body_lines.append("        _merged.update(_json.loads(_raw))")
         body_lines.append("        resolved_body = _json.dumps(_merged)")
         body_lines.append("    elif _body_fields:")
+        # Validate required fields are present before sending.
+        if body_schema_required:
+            req_list_repr = repr(body_schema_required)
+            body_lines.append(
+                f"        _missing = [f for f in {req_list_repr}"
+                f" if f not in _body_fields]"
+            )
+            body_lines.append("        if _missing:")
+            body_lines.append(
+                "            _typer.echo("
+                "'Error: missing required body fields: '"
+                " + ', '.join(_missing) +"
+                "'. Use individual flags or --body JSON.', err=True)"
+            )
+            body_lines.append("            raise _typer.Exit(code=1)")
         body_lines.append("        resolved_body = _json.dumps(_body_fields)")
         body_lines.append("    else:")
         # Validate required fields when nothing was provided.
         if body_schema_required:
-            missing_repr = repr(body_schema_required)
             body_lines.append(
                 f"        _typer.echo("
                 f"'Error: missing required body fields: {", ".join(body_schema_required)}."

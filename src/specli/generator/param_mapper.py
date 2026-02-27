@@ -280,7 +280,9 @@ def build_body_field_options(schema: dict[str, Any]) -> list[dict[str, Any]]:
             help_text = f"{help_text}  {enum_hint}" if help_text else enum_hint
 
         prop_default = prop_schema.get("default")
-        cli_name = f"--{prop_name}"
+        # Primary CLI name uses hyphens (standard convention);
+        # Typer also accepts the underscore variant automatically.
+        cli_name = f"--{prop_name.replace('_', '-')}"
 
         # All body fields are optional at the CLI level so that --body JSON
         # can satisfy required fields.  Required fields are marked in help.

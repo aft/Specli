@@ -319,6 +319,7 @@ def _load_and_enrich(
     import_strings_path: Optional[str],
     export_strings_path: Optional[str],
     generate_skill_dir: Optional[str],
+    cli_name: Optional[str] = None,
 ) -> tuple[Any, dict, str]:
     """Load a profile and its OpenAPI spec, then run the enrichment pipeline.
 
@@ -421,7 +422,8 @@ def _load_and_enrich(
             except Exception:
                 pass  # No workflows section — that's fine.
         result_path = generate_skill(
-            spec, generate_skill_dir, profile, workflows=workflows
+            spec, generate_skill_dir, profile, workflows=workflows,
+            cli_name=cli_name,
         )
         success(f"Skill generated at: {result_path}")
 
@@ -591,6 +593,7 @@ def build_compile(
         bp["import_strings"],
         bp["export_strings"],
         bp["generate_skill"],
+        cli_name=name,
     )
 
     # Exit early if --no-build.
@@ -860,6 +863,7 @@ def build_generate(
         bp["import_strings"],
         bp["export_strings"],
         bp["generate_skill"],
+        cli_name=name,
     )
 
     # Exit early if --no-build.

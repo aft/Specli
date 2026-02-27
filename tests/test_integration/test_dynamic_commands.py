@@ -587,7 +587,7 @@ class TestGenerateSkillIntegration:
         )
 
         skill_output = tmp_path / "skill-output"
-        generate_skill(petstore_spec, skill_output, profile=profile)
+        generate_skill(petstore_spec, skill_output, profile=profile, cli_name="my-petstore")
 
         content = (skill_output / "SKILL.md").read_text()
         assert "my-petstore" in content

@@ -208,8 +208,8 @@ class TestSkillMdContent:
         out = tmp_path / "skill"
         generate_skill(petstore_spec, out)
         content = (out / "SKILL.md").read_text(encoding="utf-8")
-        # Should contain specli command examples
-        assert "specli" in content
+        # Should contain CLI command examples using the slug-derived name
+        assert "petstore-api" in content
         assert "pets" in content
 
     def test_contains_frontmatter(self, tmp_path: Path, petstore_spec: ParsedSpec) -> None:
@@ -225,8 +225,8 @@ class TestSkillMdContent:
         generate_skill(petstore_spec, out)
         content = (out / "SKILL.md").read_text(encoding="utf-8")
         assert "## Quick Start" in content
-        assert "pip install specli" in content
-        assert "specli init --spec" in content
+        assert "pip install petstore-api" in content
+        assert "petstore-api --help" in content
 
     def test_contains_grouped_operations(self, tmp_path: Path, petstore_spec: ParsedSpec) -> None:
         out = tmp_path / "skill"
@@ -249,19 +249,21 @@ class TestSkillMdContent:
         content = (out / "SKILL.md").read_text(encoding="utf-8")
         assert "my-petstore" in content
 
-    def test_spec_url_from_profile(self, tmp_path: Path, petstore_spec: ParsedSpec) -> None:
+    def test_cli_name_from_parameter(self, tmp_path: Path, petstore_spec: ParsedSpec) -> None:
+        """When cli_name is provided, commands use it instead of the slug."""
         profile = Profile(name="petstore", spec="https://example.com/petstore.yaml")
         out = tmp_path / "skill"
-        generate_skill(petstore_spec, out, profile=profile)
+        generate_skill(petstore_spec, out, profile=profile, cli_name="my-pet-cli")
         content = (out / "SKILL.md").read_text(encoding="utf-8")
-        assert "https://example.com/petstore.yaml" in content
+        assert "my-pet-cli pets list" in content
+        assert "pip install my-pet-cli" in content
 
-    def test_spec_url_falls_back_to_server(self, tmp_path: Path, petstore_spec: ParsedSpec) -> None:
-        """Without a profile, spec_url should come from the first server URL."""
+    def test_cli_name_defaults_to_slug(self, tmp_path: Path, petstore_spec: ParsedSpec) -> None:
+        """Without cli_name, commands use the slugified API title."""
         out = tmp_path / "skill"
         generate_skill(petstore_spec, out)
         content = (out / "SKILL.md").read_text(encoding="utf-8")
-        assert "https://api.petstore.example.com/v1" in content
+        assert "petstore-api pets list" in content
 
 
 # ---------------------------------------------------------------------------
@@ -698,7 +700,7 @@ class TestPetstoreFullGeneration:
         skill_md = (out / "SKILL.md").read_text(encoding="utf-8")
         assert "Petstore API" in skill_md
         assert "A sample API for managing pets" in skill_md
-        assert "specli" in skill_md
+        assert "petstore-api" in skill_md  # Uses slug-derived CLI name
         assert "## Available Commands" in skill_md
         assert "## Auth Setup" in skill_md
         assert "## API Reference" in skill_md
@@ -728,8 +730,7 @@ class TestPetstoreFullGeneration:
         generate_skill(petstore_spec, out, profile=profile)
 
         skill_md = (out / "SKILL.md").read_text(encoding="utf-8")
-        assert "petstore-prod" in skill_md
-        assert "https://api.petstore.example.com/openapi.json" in skill_md
+        assert "petstore-prod" in skill_md  # Profile name in Quick Start comment
 
         auth_setup = (out / "references" / "auth-setup.md").read_text(encoding="utf-8")
         assert "petstore-prod" in auth_setup

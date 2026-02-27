@@ -10,14 +10,11 @@ description: {{ description }}
 ## Quick Start
 
 ```bash
-# Install
-pip install specli
+# Install (profile: {{ profile_name }})
+pip install {{ cli_name }}
 
-# Initialize
-specli init --spec {{ spec_url }}
-
-# Configure auth
-specli auth login {{ profile_name }}
+# Verify
+{{ cli_name }} --help
 ```
 
 ## Available Commands

@@ -54,6 +54,7 @@ def generate_skill(
     output_dir: str | Path,
     profile: Optional[Profile] = None,
     workflows: Optional[list[dict]] = None,
+    cli_name: Optional[str] = None,
 ) -> Path:
     """Generate a complete Claude Code skill directory from a parsed spec.
 
@@ -95,7 +96,7 @@ def generate_skill(
     env = _create_jinja_env()
 
     # Build template context
-    context = _build_context(spec, profile)
+    context = _build_context(spec, profile, cli_name=cli_name)
     context["workflows"] = workflows or []
 
     # Render and write files
@@ -127,7 +128,11 @@ def _create_jinja_env() -> Environment:
     )
 
 
-def _build_context(spec: ParsedSpec, profile: Optional[Profile] = None) -> dict:
+def _build_context(
+    spec: ParsedSpec,
+    profile: Optional[Profile] = None,
+    cli_name: Optional[str] = None,
+) -> dict:
     """Build the full template context dict from a spec and optional profile.
 
     Assembles all variables needed by the Jinja2 skill templates:
@@ -159,10 +164,13 @@ def _build_context(spec: ParsedSpec, profile: Optional[Profile] = None) -> dict:
     name = _slugify(title)
     description = spec.info.description or f"CLI for the {title}"
 
+    # Use explicit cli_name when provided (e.g. "frad"), else fall back to slug
+    effective_cli_name = cli_name or name
+
     # Build operation list with command strings and group them
     enriched_ops = []
     for op in spec.operations:
-        command = _operation_to_command(op, profile_name)
+        command = _operation_to_command(op, profile_name, effective_cli_name)
         summary = op.summary or op.description or "No description"
         enriched_ops.append({
             "command": command,
@@ -177,7 +185,7 @@ def _build_context(spec: ParsedSpec, profile: Optional[Profile] = None) -> dict:
     for group_name, ops in grouped_operations.items():
         group_entries = []
         for op in ops:
-            command = _operation_to_command(op, profile_name)
+            command = _operation_to_command(op, profile_name, effective_cli_name)
             summary = op.summary or op.description or "No description"
             group_entries.append({
                 "command": command,
@@ -187,6 +195,7 @@ def _build_context(spec: ParsedSpec, profile: Optional[Profile] = None) -> dict:
 
     return {
         "name": name,
+        "cli_name": effective_cli_name,
         "title": title,
         "description": description,
         "spec_url": spec_url,
@@ -199,22 +208,27 @@ def _build_context(spec: ParsedSpec, profile: Optional[Profile] = None) -> dict:
     }
 
 
-def _operation_to_command(operation: APIOperation, profile_name: str = "default") -> str:
+def _operation_to_command(
+    operation: APIOperation,
+    profile_name: str = "default",
+    cli_name: str = "specli",
+) -> str:
     """Convert an operation to a CLI command string for examples.
 
     Uses the operation's path segments and HTTP method to build a readable
     command. Path parameters become <placeholder> arguments.
 
     Examples:
-        GET /pets          -> specli pets list
-        POST /pets         -> specli pets create
-        GET /pets/{petId}  -> specli pets get <petId>
-        DELETE /pets/{id}  -> specli pets delete <id>
+        GET /pets          -> frad pets list
+        POST /pets         -> frad pets create
+        GET /pets/{petId}  -> frad pets get <petId>
+        DELETE /pets/{id}  -> frad pets delete <id>
 
     Args:
         operation: The API operation to convert.
         profile_name: The profile name (unused in command but available for
             future --profile flag injection).
+        cli_name: The CLI binary name to use in command strings (e.g. "frad").
 
     Returns:
         A CLI command string.
@@ -245,7 +259,7 @@ def _operation_to_command(operation: APIOperation, profile_name: str = "default"
         verb = "list" if not param_parts else "get"
 
     # Assemble command parts
-    parts = ["specli", resource, verb]
+    parts = [cli_name, resource, verb]
     parts.extend(param_parts)
 
     return " ".join(parts)

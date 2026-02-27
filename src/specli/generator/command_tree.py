@@ -128,6 +128,8 @@ def build_command_tree(
 
         # Step 5 -- attach leaf commands.
         for operation, original_path in op_entries:
+            if _is_html_only(operation):
+                continue
             verb = _determine_verb(operation)
             cmd_fn = _build_command_function(
                 operation, original_path, request_callback,
@@ -147,6 +149,30 @@ def build_command_tree(
             parent_app.command(name=final_verb, help=help_text)(cmd_fn)
 
     return app
+
+
+# ---------------------------------------------------------------------------
+# HTML-only endpoint filter
+# ---------------------------------------------------------------------------
+
+
+def _is_html_only(operation: APIOperation) -> bool:
+    """Return True if *operation* only produces non-API content types.
+
+    Endpoints that exclusively return ``text/html`` (or similar browser
+    content) are web-UI pages and have no value as CLI commands.  They are
+    silently skipped during command-tree generation.
+    """
+    if not operation.responses:
+        return False
+    all_content_types: set[str] = set()
+    for resp in operation.responses:
+        all_content_types.update(resp.content_types)
+    if not all_content_types:
+        return False
+    api_types = {"application/json", "application/xml", "text/plain",
+                 "application/octet-stream", "multipart/form-data"}
+    return not all_content_types & api_types
 
 
 # ---------------------------------------------------------------------------

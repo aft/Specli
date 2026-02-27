@@ -31,6 +31,7 @@ from typing import Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from specli.generator.command_tree import _is_html_only
 from specli.models import APIOperation, HTTPMethod, ParsedSpec, Profile
 
 
@@ -167,9 +168,12 @@ def _build_context(
     # Use explicit cli_name when provided (e.g. "frad"), else fall back to slug
     effective_cli_name = cli_name or name
 
+    # Filter out HTML-only endpoints (web pages, not API endpoints).
+    api_operations = [op for op in spec.operations if not _is_html_only(op)]
+
     # Build operation list with command strings and group them
     enriched_ops = []
-    for op in spec.operations:
+    for op in api_operations:
         command = _operation_to_command(op, profile_name, effective_cli_name)
         summary = op.summary or op.description or "No description"
         enriched_ops.append({
@@ -178,7 +182,7 @@ def _build_context(
             "operation": op,
         })
 
-    grouped_operations = _group_operations_by_resource(spec.operations)
+    grouped_operations = _group_operations_by_resource(api_operations)
 
     # Build grouped operations with command strings for the skill template
     grouped_with_commands: dict[str, list[dict]] = {}
@@ -201,7 +205,7 @@ def _build_context(
         "spec_url": spec_url,
         "profile_name": profile_name,
         "grouped_operations": grouped_with_commands,
-        "operations": spec.operations,
+        "operations": api_operations,
         "security_schemes": spec.security_schemes,
         "servers": spec.servers,
         "info": spec.info,

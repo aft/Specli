@@ -25,6 +25,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import click
 import typer
 
 from specli.generator.param_mapper import (
@@ -464,8 +465,14 @@ def _build_command_function(
             )
             body_lines.append("        if _missing:")
             body_lines.append(
+                "            _ctx = _click.get_current_context()"
+            )
+            body_lines.append(
+                "            _typer.echo(_ctx.get_help())"
+            )
+            body_lines.append(
                 "            _typer.echo("
-                "'Error: missing required body fields: '"
+                "'\\nError: missing required body fields: '"
                 " + ', '.join(_missing) +"
                 "'. Use individual flags or --body JSON.', err=True)"
             )
@@ -475,8 +482,15 @@ def _build_command_function(
         # Validate required fields when nothing was provided.
         if body_schema_required:
             body_lines.append(
+                f"        _ctx = _click.get_current_context()"
+            )
+            body_lines.append(
+                f"        _typer.echo(_ctx.get_help())"
+            )
+            _req_names = ", ".join(body_schema_required)
+            body_lines.append(
                 f"        _typer.echo("
-                f"'Error: missing required body fields: {", ".join(body_schema_required)}."
+                f"'\\nError: missing required body fields: {_req_names}."
                 f" Use individual flags or --body JSON.', err=True)"
             )
             body_lines.append("        raise _typer.Exit(code=1)")
@@ -505,6 +519,7 @@ def _build_command_function(
     namespace["_dispatch"] = _make_dispatch(request_callback)
     namespace["_json"] = json
     namespace["_typer"] = typer
+    namespace["_click"] = click
 
     code = compile(source, f"<specli:{original_path}>", "exec")
     exec(code, namespace)  # noqa: S102 -- controlled code generation

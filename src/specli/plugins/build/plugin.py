@@ -240,6 +240,10 @@ def _load_commands() -> None:
                     form_data = parsed if isinstance(parsed, dict) else {{"body": body}}
                 else:
                     json_body = parsed
+            elif method.upper() in ("POST", "PUT", "PATCH"):
+                # Send empty object so server can validate and return a
+                # proper 400/422 instead of crashing on empty input.
+                json_body = {{}}
 
             response = client.request(
                 method=method.upper(),
@@ -405,7 +409,20 @@ def _load_and_enrich(
         from specli.plugins.skill import generate_skill
 
         spec = extract_spec(raw_spec, openapi_version)
-        result_path = generate_skill(spec, generate_skill_dir, profile)
+        # Load workflows from strings file if available.
+        workflows = None
+        strings_path = import_strings_path or enrichment_config.get("strings_file")
+        if strings_path:
+            import json as _json
+
+            try:
+                _sdata = _json.loads(Path(strings_path).read_text(encoding="utf-8"))
+                workflows = _sdata.get("workflows")
+            except Exception:
+                pass  # No workflows section — that's fine.
+        result_path = generate_skill(
+            spec, generate_skill_dir, profile, workflows=workflows
+        )
         success(f"Skill generated at: {result_path}")
 
     return profile, raw_spec, openapi_version

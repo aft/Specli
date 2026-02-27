@@ -23,6 +23,15 @@
 {{ op.request_body.description or "JSON request body required." }}
 
 Content types: {{ op.request_body.content_types | join(", ") }}
+
+{% if op.request_body.schema_ and op.request_body.schema_.get("properties") %}
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+{% set required_fields = op.request_body.schema_.get("required", []) %}
+{% for prop_name, prop_schema in op.request_body.schema_["properties"].items() %}
+| `{{ prop_name }}` | {{ prop_schema.get("type", "string") }} | {{ "Yes" if prop_name in required_fields else "No" }} | {{ prop_schema.get("description", "-") }} |
+{% endfor %}
+{% endif %}
 {% endif %}
 
 {% if op.responses %}

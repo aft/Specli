@@ -28,6 +28,7 @@ from typing import Any, Callable, Optional
 import typer
 
 from specli.generator.param_mapper import (
+    build_body_field_options,
     build_body_option,
     map_parameter_to_typer,
 )
@@ -333,8 +334,29 @@ def _build_command_function(
         operation.request_body is not None
         or operation.method.value in methods_with_body
     )
+
+    # When the request body has a schema with properties, generate
+    # individual --field-name options for each property.  The --body/-b
+    # option is kept as a raw-JSON override.
+    body_field_descriptors: list[dict[str, Any]] = []
+    body_schema_required: list[str] = []
+    if (
+        has_body
+        and operation.request_body is not None
+        and operation.request_body.schema_
+        and operation.request_body.schema_.get("properties")
+    ):
+        body_field_descriptors = build_body_field_options(
+            operation.request_body.schema_
+        )
+        body_schema_required = list(
+            operation.request_body.schema_.get("required", [])
+        )
+
     if has_body:
         param_descriptors.append(build_body_option())
+    # Append body field descriptors after the --body option.
+    param_descriptors.extend(body_field_descriptors)
 
     # Determine the preferred content type for the request body.
     body_content_type: str | None = None
@@ -389,13 +411,64 @@ def _build_command_function(
     for desc in param_descriptors:
         py_name = desc["name"]
         orig_name = desc["original_name"]
-        if orig_name == "__body__":
+        if orig_name == "__body__" or orig_name.startswith("__body__."):
             continue
         body_lines.append(
             f"    params[{orig_name!r}] = {py_name}"
         )
 
-    if has_body:
+    if body_field_descriptors:
+        # Assemble body dict from individual field values, then merge
+        # with --body JSON if provided (--body overrides fields).
+        body_lines.append("    _body_fields = {}")
+        for desc in body_field_descriptors:
+            py_name = desc["name"]
+            # Extract the original property name from __body__.prop_name
+            prop_name = desc["original_name"].split(".", 1)[1]
+            field_type = desc.get("body_field_type", "string")
+            if field_type in ("object", "array"):
+                # Complex types need JSON parsing back to native.
+                body_lines.append(
+                    f"    if {py_name} is not None:"
+                )
+                body_lines.append(
+                    f"        try:"
+                )
+                body_lines.append(
+                    f"            _body_fields[{prop_name!r}] = _json.loads({py_name})"
+                )
+                body_lines.append(
+                    f"        except (ValueError, TypeError):"
+                )
+                body_lines.append(
+                    f"            _body_fields[{prop_name!r}] = {py_name}"
+                )
+            else:
+                body_lines.append(
+                    f"    if {py_name} is not None:"
+                    f" _body_fields[{prop_name!r}] = {py_name}"
+                )
+        # Merge with --body JSON override.
+        body_lines.append("    if body is not None:")
+        body_lines.append("        _raw = _resolve_body(body)")
+        body_lines.append("        _merged = _body_fields.copy()")
+        body_lines.append("        _merged.update(_json.loads(_raw))")
+        body_lines.append("        resolved_body = _json.dumps(_merged)")
+        body_lines.append("    elif _body_fields:")
+        body_lines.append("        resolved_body = _json.dumps(_body_fields)")
+        body_lines.append("    else:")
+        # Validate required fields when nothing was provided.
+        if body_schema_required:
+            missing_repr = repr(body_schema_required)
+            body_lines.append(
+                f"        _typer.echo("
+                f"'Error: missing required body fields: {", ".join(body_schema_required)}."
+                f" Use individual flags or --body JSON.', err=True)"
+            )
+            body_lines.append("        raise _typer.Exit(code=1)")
+        else:
+            body_lines.append("        resolved_body = None")
+    elif has_body:
         body_lines.append("    resolved_body = _resolve_body(body)")
     else:
         body_lines.append("    resolved_body = None")
@@ -416,6 +489,8 @@ def _build_command_function(
     # --- Inject helpers into the namespace. ---
     namespace["_resolve_body"] = _resolve_body
     namespace["_dispatch"] = _make_dispatch(request_callback)
+    namespace["_json"] = json
+    namespace["_typer"] = typer
 
     code = compile(source, f"<specli:{original_path}>", "exec")
     exec(code, namespace)  # noqa: S102 -- controlled code generation

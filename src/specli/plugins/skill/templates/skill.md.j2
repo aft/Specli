@@ -31,6 +31,16 @@ specli auth login {{ profile_name }}
 
 {% endfor %}
 
+{% if workflows %}
+## Common Workflows
+
+{% for workflow in workflows %}
+### {{ workflow.title }}
+
+{{ workflow.steps }}
+
+{% endfor %}
+{% endif %}
 ## Auth Setup
 
 See [auth-setup.md](references/auth-setup.md) for detailed authentication configuration.

@@ -231,6 +231,82 @@ def map_parameter_to_typer(param: APIParameter) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def build_body_field_options(schema: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build per-field ``--option`` descriptors from a JSON Schema's properties.
+
+    Each property in the schema becomes a named ``--option`` flag on the CLI.
+    All fields are optional at the Typer level (since ``--body`` JSON can
+    satisfy required fields), but required fields are marked in help text.
+
+    Complex types (``object``, ``array``) are serialised as JSON strings since
+    Typer does not support composite types natively.
+
+    Args:
+        schema: A JSON Schema dict with a ``properties`` mapping.
+
+    Returns:
+        A list of descriptor dicts with the same shape as
+        :func:`map_parameter_to_typer`.  Each entry uses ``original_name``
+        prefixed with ``__body__.`` so the command builder can distinguish
+        body fields from regular parameters.  An additional ``body_field_type``
+        key stores the schema type for body assembly (object/array values
+        need JSON parsing).
+    """
+    properties = schema.get("properties", {})
+    required_fields = set(schema.get("required", []))
+    descriptors: list[dict[str, Any]] = []
+
+    for prop_name, prop_schema in properties.items():
+        if not isinstance(prop_schema, dict):
+            continue
+
+        py_name = sanitize_param_name(prop_name)
+        raw_type = prop_schema.get("type", "string")
+        # OpenAPI 3.1 allows type: ["string", "null"] — extract the
+        # first non-null type for mapping purposes.
+        if isinstance(raw_type, list):
+            non_null = [t for t in raw_type if t != "null"]
+            schema_type = non_null[0] if non_null else "string"
+        else:
+            schema_type = raw_type
+        schema_format = prop_schema.get("format")
+        py_type = openapi_type_to_python(schema_type, schema_format)
+        is_required = prop_name in required_fields
+
+        help_text = prop_schema.get("description", "")
+        if prop_schema.get("enum"):
+            choices = ", ".join(str(v) for v in prop_schema["enum"])
+            enum_hint = f"[choices: {choices}]"
+            help_text = f"{help_text}  {enum_hint}" if help_text else enum_hint
+
+        prop_default = prop_schema.get("default")
+        cli_name = f"--{prop_name}"
+
+        # All body fields are optional at the CLI level so that --body JSON
+        # can satisfy required fields.  Required fields are marked in help.
+        if is_required:
+            req_help = f"{help_text}  [REQUIRED]" if help_text else "[REQUIRED]"
+            py_type = Optional[py_type]  # type: ignore[assignment]
+            default = typer.Option(None, cli_name, help=req_help)
+        else:
+            if prop_default is None:
+                py_type = Optional[py_type]  # type: ignore[assignment]
+            default = typer.Option(prop_default, cli_name, help=help_text or None)
+
+        descriptors.append({
+            "name": py_name,
+            "original_name": f"__body__.{prop_name}",
+            "type": py_type,
+            "default": default,
+            "help": help_text,
+            "is_argument": False,
+            "location": None,
+            "body_field_type": schema_type,
+        })
+
+    return descriptors
+
+
 def build_body_option() -> dict[str, Any]:
     """Build a ``--body`` / ``-b`` option descriptor for request body operations.
 

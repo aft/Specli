@@ -98,7 +98,7 @@ class TestDynamicCommandGeneration:
         app = build_command_tree(petstore_spec, PathRulesConfig(), callback)
         runner = CliRunner()
 
-        result = runner.invoke(app, ["pets", "create"])
+        result = runner.invoke(app, ["pets", "create", "--name", "Fido"])
         assert result.exit_code == 0
         assert captured["method"].upper() == "POST"
 
@@ -485,7 +485,7 @@ class TestFullRoundTrip:
         app = build_command_tree(spec, PathRulesConfig(), callback)
 
         runner.invoke(app, ["pets", "list"])
-        runner.invoke(app, ["pets", "create"])
+        runner.invoke(app, ["pets", "create", "--name", "Fido"])
         runner.invoke(app, ["pets", "get", "123"])
         runner.invoke(app, ["pets", "delete", "456"])
 

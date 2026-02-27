@@ -727,8 +727,8 @@ class TestPetstoreIntegration:
         result = runner.invoke(app, ["pets", "list"])
         assert result.exit_code == 0
 
-        # 2. POST /pets -> create  (needs --body or at least runs)
-        result = runner.invoke(app, ["pets", "create"])
+        # 2. POST /pets -> create  (needs --name, the required body field)
+        result = runner.invoke(app, ["pets", "create", "--name", "Fido"])
         assert result.exit_code == 0
 
         # 3. GET /pets/{petId} -> get

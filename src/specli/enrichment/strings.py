@@ -260,6 +260,24 @@ def _import_operations(raw_spec: dict, op_strings: dict[str, dict[str, Any]]) ->
         if param_strings:
             _import_param_descriptions(operation, param_strings)
 
+        # Inject synthetic requestBody from body_schema when the spec has none.
+        body_schema = strings.get("body_schema")
+        if body_schema and not operation.get("requestBody"):
+            properties = body_schema.get("properties", {})
+            required_fields = body_schema.get("required_fields", [])
+            operation["requestBody"] = {
+                "required": bool(required_fields),
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": properties,
+                            "required": required_fields,
+                        }
+                    }
+                },
+            }
+
 
 def _import_param_descriptions(operation: dict, param_strings: dict[str, str]) -> None:
     """Apply parameter descriptions to an operation, overriding existing values.

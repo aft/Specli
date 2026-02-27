@@ -53,6 +53,7 @@ def generate_skill(
     spec: ParsedSpec,
     output_dir: str | Path,
     profile: Optional[Profile] = None,
+    workflows: Optional[list[dict]] = None,
 ) -> Path:
     """Generate a complete Claude Code skill directory from a parsed spec.
 
@@ -72,6 +73,8 @@ def generate_skill(
         profile: Optional profile for customized naming and base URL.
             When ``None``, the API title is slugified for naming and the
             first server URL is used.
+        workflows: Optional list of workflow dicts with ``title`` and
+            ``steps`` keys to render in the SKILL.md workflows section.
 
     Returns:
         The resolved :class:`~pathlib.Path` of *output_dir*.
@@ -93,6 +96,7 @@ def generate_skill(
 
     # Build template context
     context = _build_context(spec, profile)
+    context["workflows"] = workflows or []
 
     # Render and write files
     _render_template(env, "skill.md.j2", output_path / "SKILL.md", context)

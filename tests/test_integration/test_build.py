@@ -634,3 +634,511 @@ class TestBuildDefaults:
         assert result["name"] is None
         assert result["output_dir"] == "./default"
         assert result["cli_version"] == "1.0.0"
+
+
+# ---------------------------------------------------------------------------
+# Body field options (per-field flags from request body schema)
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_spec(tmp_dir: Path) -> Path:
+    """Create a minimal OpenAPI spec with a POST endpoint that has NO requestBody."""
+    spec = {
+        "openapi": "3.0.3",
+        "info": {"title": "Minimal API", "version": "1.0.0"},
+        "paths": {
+            "/items": {
+                "post": {
+                    "operationId": "createItem",
+                    "summary": "Create an item",
+                    "responses": {"201": {"description": "Created"}},
+                },
+                "get": {
+                    "operationId": "listItems",
+                    "summary": "List items",
+                    "responses": {"200": {"description": "OK"}},
+                },
+            }
+        },
+    }
+    spec_path = tmp_dir / "minimal.json"
+    spec_path.write_text(json.dumps(spec))
+    return spec_path
+
+
+@pytest.fixture
+def _profile_with_strings(isolated_config: Path, tmp_path: Path) -> tuple[str, Path]:
+    """Profile with a strings file containing body_schema. Returns (name, strings_path)."""
+    profiles_dir = isolated_config / "config" / "specli" / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+
+    spec_path = _make_minimal_spec(isolated_config)
+
+    strings_path = tmp_path / "strings.json"
+    strings_data = {
+        "operations": {
+            "POST /items": {
+                "summary": "Create an item",
+                "body_schema": {
+                    "properties": {
+                        "title": {"type": "string", "description": "Item title"},
+                        "tag": {"type": "string", "description": "Item tag"},
+                        "count": {"type": "integer", "description": "Item count"},
+                    },
+                    "required_fields": ["title"],
+                },
+            }
+        }
+    }
+    strings_path.write_text(json.dumps(strings_data))
+
+    profile = {
+        "name": "body-test",
+        "spec": str(spec_path),
+        "base_url": "http://localhost:8080",
+        "build": {
+            "name": "body-cli",
+            "output_dir": str(tmp_path / "build-output"),
+            "import_strings": str(strings_path),
+        },
+    }
+    (profiles_dir / "body-test.json").write_text(json.dumps(profile))
+    return "body-test", strings_path
+
+
+class TestBodyFieldOptions:
+    """Tests for per-field body flags generated from body_schema in strings."""
+
+    def test_generate_with_body_fields_creates_package(
+        self,
+        isolated_config: Path,
+        _profile_with_strings: tuple[str, Path],
+    ) -> None:
+        """A profile with body_schema should produce a valid pip package."""
+        profile_name, _ = _profile_with_strings
+
+        result = runner.invoke(
+            app,
+            ["build", "generate", "--profile", profile_name],
+        )
+        assert result.exit_code == 0, result.output
+
+    def test_frozen_spec_has_injected_request_body(
+        self,
+        isolated_config: Path,
+        _profile_with_strings: tuple[str, Path],
+        tmp_path: Path,
+    ) -> None:
+        """Frozen spec in generated cli.py should contain the injected requestBody."""
+        profile_name, _ = _profile_with_strings
+
+        result = runner.invoke(
+            app,
+            ["build", "generate", "--profile", profile_name],
+        )
+        assert result.exit_code == 0, result.output
+
+        cli_source = (
+            tmp_path / "build-output" / "body-cli" / "src" / "body_cli" / "cli.py"
+        ).read_text()
+
+        # The frozen spec is embedded as JSON. Parse it to verify the
+        # injected requestBody from the strings file.
+        import re as _re
+
+        m = _re.search(r"_FROZEN_SPEC = json\.loads\('(.+?)'\)", cli_source, _re.DOTALL)
+        assert m, "Could not find _FROZEN_SPEC in generated cli.py"
+        frozen_spec = json.loads(m.group(1))
+
+        post_items = frozen_spec["paths"]["/items"]["post"]
+        assert "requestBody" in post_items
+        schema = post_items["requestBody"]["content"]["application/json"]["schema"]
+        assert "title" in schema["properties"]
+        assert "tag" in schema["properties"]
+        assert "count" in schema["properties"]
+        assert "title" in schema.get("required", [])
+
+    def test_generated_cli_is_valid_python(
+        self,
+        isolated_config: Path,
+        _profile_with_strings: tuple[str, Path],
+        tmp_path: Path,
+    ) -> None:
+        """Generated cli.py must compile without SyntaxError."""
+        profile_name, _ = _profile_with_strings
+
+        result = runner.invoke(
+            app,
+            ["build", "generate", "--profile", profile_name],
+        )
+        assert result.exit_code == 0, result.output
+
+        cli_source = (
+            tmp_path / "build-output" / "body-cli" / "src" / "body_cli" / "cli.py"
+        ).read_text()
+        compile(cli_source, "<test-body-fields>", "exec")
+
+    def test_command_tree_generates_body_field_flags(self) -> None:
+        """Command tree should create --field flags when requestBody has properties."""
+        from unittest.mock import MagicMock
+
+        from typer.testing import CliRunner as _Runner
+
+        from specli.generator.command_tree import build_command_tree
+        from specli.generator.path_rules import PathRulesConfig
+        from specli.models import (
+            APIInfo,
+            APIOperation,
+            HTTPMethod,
+            ParsedSpec,
+            RequestBodyInfo,
+        )
+
+        op = APIOperation(
+            method=HTTPMethod.POST,
+            path="/items",
+            summary="Create an item",
+            parameters=[],
+            request_body=RequestBodyInfo(
+                description="Item to create",
+                required=True,
+                content_types=["application/json"],
+                schema_={
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Item title"},
+                        "count": {"type": "integer", "description": "Item count", "default": 1},
+                    },
+                    "required": ["title"],
+                },
+            ),
+        )
+        spec = ParsedSpec(
+            info=APIInfo(title="Test API", version="1.0.0"),
+            openapi_version="3.0.3",
+            operations=[op],
+        )
+
+        captured: dict[str, Any] = {}
+
+        def callback(method: str, path: str, params: dict, body: str | None, content_type: str | None = None) -> None:
+            captured["body"] = body
+
+        tree = build_command_tree(spec, PathRulesConfig(), callback)
+        r = _Runner()
+
+        # Invoke with individual fields.
+        result = r.invoke(tree, ["items", "create", "--title", "Hello"])
+        assert result.exit_code == 0, result.output
+        body_data = json.loads(captured["body"])
+        assert body_data["title"] == "Hello"
+
+    def test_body_field_required_validation(self) -> None:
+        """Missing required body field (without --body) should error."""
+        from unittest.mock import MagicMock
+
+        from typer.testing import CliRunner as _Runner
+
+        from specli.generator.command_tree import build_command_tree
+        from specli.generator.path_rules import PathRulesConfig
+        from specli.models import (
+            APIInfo,
+            APIOperation,
+            HTTPMethod,
+            ParsedSpec,
+            RequestBodyInfo,
+        )
+
+        op = APIOperation(
+            method=HTTPMethod.POST,
+            path="/items",
+            summary="Create an item",
+            parameters=[],
+            request_body=RequestBodyInfo(
+                description="Item to create",
+                required=True,
+                content_types=["application/json"],
+                schema_={
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Item title"},
+                    },
+                    "required": ["title"],
+                },
+            ),
+        )
+        spec = ParsedSpec(
+            info=APIInfo(title="Test API", version="1.0.0"),
+            openapi_version="3.0.3",
+            operations=[op],
+        )
+
+        tree = build_command_tree(spec, PathRulesConfig(), MagicMock())
+        r = _Runner()
+
+        # Invoke with no body fields and no --body → should error.
+        result = r.invoke(tree, ["items", "create"])
+        assert result.exit_code != 0
+
+    def test_body_flag_overrides_fields(self) -> None:
+        """--body JSON should override individual field values."""
+        from unittest.mock import MagicMock
+
+        from typer.testing import CliRunner as _Runner
+
+        from specli.generator.command_tree import build_command_tree
+        from specli.generator.path_rules import PathRulesConfig
+        from specli.models import (
+            APIInfo,
+            APIOperation,
+            HTTPMethod,
+            ParsedSpec,
+            RequestBodyInfo,
+        )
+
+        op = APIOperation(
+            method=HTTPMethod.POST,
+            path="/items",
+            summary="Create an item",
+            parameters=[],
+            request_body=RequestBodyInfo(
+                description="Item to create",
+                required=True,
+                content_types=["application/json"],
+                schema_={
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Item title"},
+                        "count": {"type": "integer", "description": "Count"},
+                    },
+                    "required": ["title"],
+                },
+            ),
+        )
+        spec = ParsedSpec(
+            info=APIInfo(title="Test API", version="1.0.0"),
+            openapi_version="3.0.3",
+            operations=[op],
+        )
+
+        captured: dict[str, Any] = {}
+
+        def callback(method: str, path: str, params: dict, body: str | None, content_type: str | None = None) -> None:
+            captured["body"] = body
+
+        tree = build_command_tree(spec, PathRulesConfig(), callback)
+        r = _Runner()
+
+        # --title via field, --body overrides with different title.
+        result = r.invoke(
+            tree,
+            ["items", "create", "--title", "Field", "--body", '{"title":"Override"}'],
+        )
+        assert result.exit_code == 0, result.output
+        body_data = json.loads(captured["body"])
+        # --body should win over individual --title.
+        assert body_data["title"] == "Override"
+
+    def test_no_body_schema_keeps_plain_body(self) -> None:
+        """Operations without request body schema still get --body."""
+        from unittest.mock import MagicMock
+
+        from typer.testing import CliRunner as _Runner
+
+        from specli.generator.command_tree import build_command_tree
+        from specli.generator.path_rules import PathRulesConfig
+        from specli.models import (
+            APIInfo,
+            APIOperation,
+            HTTPMethod,
+            ParsedSpec,
+        )
+
+        op = APIOperation(
+            method=HTTPMethod.POST,
+            path="/items",
+            summary="Create item",
+            parameters=[],
+        )
+        spec = ParsedSpec(
+            info=APIInfo(title="Test API", version="1.0.0"),
+            openapi_version="3.0.3",
+            operations=[op],
+        )
+
+        captured: dict[str, Any] = {}
+
+        def callback(method: str, path: str, params: dict, body: str | None, content_type: str | None = None) -> None:
+            captured["body"] = body
+
+        tree = build_command_tree(spec, PathRulesConfig(), callback)
+        r = _Runner()
+
+        result = r.invoke(tree, ["items", "create", "--body", '{"x":1}'])
+        assert result.exit_code == 0, result.output
+        assert json.loads(captured["body"]) == {"x": 1}
+
+
+class TestBodyFieldAssembly:
+    """Tests that body field assembly and --body override logic works correctly."""
+
+    def test_build_body_field_options_basic(self) -> None:
+        """build_body_field_options returns correct descriptors."""
+        from specli.generator.param_mapper import build_body_field_options
+
+        schema = {
+            "properties": {
+                "model_id": {"type": "string", "description": "Model identifier"},
+                "batch_count": {
+                    "type": "integer",
+                    "description": "How many",
+                    "default": 1,
+                },
+            },
+            "required": ["model_id"],
+        }
+        descriptors = build_body_field_options(schema)
+
+        assert len(descriptors) == 2
+
+        model_desc = next(d for d in descriptors if d["name"] == "model_id")
+        assert model_desc["original_name"] == "__body__.model_id"
+        # [REQUIRED] is baked into the Typer Option help, not the descriptor help.
+        assert model_desc["default"].help is not None
+        assert "[REQUIRED]" in model_desc["default"].help
+        assert model_desc["body_field_type"] == "string"
+
+        batch_desc = next(d for d in descriptors if d["name"] == "batch_count")
+        assert batch_desc["original_name"] == "__body__.batch_count"
+        assert batch_desc["body_field_type"] == "integer"
+
+    def test_build_body_field_options_complex_types(self) -> None:
+        """Object/array types produce str descriptors with correct body_field_type."""
+        from specli.generator.param_mapper import build_body_field_options
+
+        schema = {
+            "properties": {
+                "parameters": {
+                    "type": "object",
+                    "description": "Nested params as JSON",
+                },
+                "tags": {
+                    "type": "array",
+                    "description": "List of tags as JSON",
+                },
+            },
+        }
+        descriptors = build_body_field_options(schema)
+
+        params_desc = next(d for d in descriptors if d["name"] == "parameters")
+        assert params_desc["body_field_type"] == "object"
+        # Complex types should map to str at the CLI level.
+        assert params_desc["type"] is str or "str" in str(params_desc["type"])
+
+        tags_desc = next(d for d in descriptors if d["name"] == "tags")
+        assert tags_desc["body_field_type"] == "array"
+
+    def test_build_body_field_options_openapi_31_nullable(self) -> None:
+        """OpenAPI 3.1 type: ["string", "null"] should not crash."""
+        from specli.generator.param_mapper import build_body_field_options
+
+        schema = {
+            "properties": {
+                "nickname": {
+                    "type": ["string", "null"],
+                    "description": "Optional nickname",
+                },
+            },
+        }
+        descriptors = build_body_field_options(schema)
+        assert len(descriptors) == 1
+        assert descriptors[0]["body_field_type"] == "string"
+
+    def test_build_body_field_options_enum_hint(self) -> None:
+        """Fields with enum values get [choices: ...] in help text."""
+        from specli.generator.param_mapper import build_body_field_options
+
+        schema = {
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "description": "Current status",
+                    "enum": ["active", "inactive", "pending"],
+                },
+            },
+        }
+        descriptors = build_body_field_options(schema)
+        assert len(descriptors) == 1
+        assert "choices:" in descriptors[0]["help"]
+        assert "active" in descriptors[0]["help"]
+
+    def test_body_schema_import_injects_request_body(self) -> None:
+        """_import_operations should inject requestBody from body_schema."""
+        from specli.enrichment.strings import _import_operations
+
+        raw_spec = {
+            "paths": {
+                "/items": {
+                    "post": {
+                        "summary": "Create item",
+                    }
+                }
+            }
+        }
+        op_strings = {
+            "POST /items": {
+                "body_schema": {
+                    "properties": {
+                        "title": {"type": "string"},
+                    },
+                    "required_fields": ["title"],
+                }
+            }
+        }
+        _import_operations(raw_spec, op_strings)
+
+        req_body = raw_spec["paths"]["/items"]["post"]["requestBody"]
+        assert req_body["required"] is True
+        schema = req_body["content"]["application/json"]["schema"]
+        assert "title" in schema["properties"]
+        assert "title" in schema["required"]
+
+    def test_body_schema_import_does_not_overwrite_existing(self) -> None:
+        """_import_operations should NOT overwrite an existing requestBody."""
+        from specli.enrichment.strings import _import_operations
+
+        existing_body = {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {"type": "object", "properties": {"existing": {"type": "string"}}}
+                }
+            },
+        }
+        raw_spec = {
+            "paths": {
+                "/items": {
+                    "post": {
+                        "summary": "Create item",
+                        "requestBody": existing_body,
+                    }
+                }
+            }
+        }
+        op_strings = {
+            "POST /items": {
+                "body_schema": {
+                    "properties": {
+                        "new_field": {"type": "string"},
+                    },
+                }
+            }
+        }
+        _import_operations(raw_spec, op_strings)
+
+        # Should keep the original requestBody.
+        schema = raw_spec["paths"]["/items"]["post"]["requestBody"]["content"][
+            "application/json"
+        ]["schema"]
+        assert "existing" in schema["properties"]
+        assert "new_field" not in schema.get("properties", {})

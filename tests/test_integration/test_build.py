@@ -390,6 +390,144 @@ class TestCheckPyInstaller:
 # ---------------------------------------------------------------------------
 
 
+class TestBuildURLSpec:
+    """Verify URL specs are fetched once at build time and embedded in the bundle."""
+
+    def test_generate_embeds_url_fetched_spec(
+        self, isolated_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Force XDG layout so the profile lands where `isolated_config` stages it.
+        monkeypatch.setattr("specli.config._is_xdg_platform", lambda: True)
+        profiles_dir = isolated_config / "config" / "specli" / "profiles"
+        profiles_dir.mkdir(parents=True, exist_ok=True)
+        profile = {
+            "name": "url-api",
+            "spec": "https://api.example.com/openapi.json",
+            "base_url": "https://api.example.com",
+        }
+        (profiles_dir / "url-api.json").write_text(json.dumps(profile))
+
+        with open(FIXTURES_DIR / "petstore_3.0.json") as f:
+            fake_spec_text = f.read()
+
+        fake_response = MagicMock()
+        fake_response.text = fake_spec_text
+        fake_response.headers = {"content-type": "application/json"}
+        fake_response.raise_for_status = MagicMock()
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        with patch(
+            "specli.parser.loader.httpx.get", return_value=fake_response
+        ) as mock_get:
+            result = runner.invoke(
+                app,
+                [
+                    "build", "generate",
+                    "--profile", "url-api",
+                    "--name", "url-cli",
+                    "--output", str(output_dir),
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert mock_get.call_count == 1
+        assert mock_get.call_args.args[0] == "https://api.example.com/openapi.json"
+
+        cli_file = output_dir / "url-cli" / "src" / "url_cli" / "cli.py"
+        assert cli_file.exists()
+        source = cli_file.read_text(encoding="utf-8")
+        assert "_FROZEN_SPEC" in source
+        # Spec title from the fixture must be inlined.
+        parsed = json.loads(fake_spec_text)
+        expected_title = parsed["info"]["title"]
+        assert expected_title in source
+
+
+class TestBuildAPILogin:
+    """Verify api_login profiles produce login/logout in the generated CLI."""
+
+    def _write_profile(self, isolated_config: Path, *, api_login: bool) -> str:
+        profiles_dir = isolated_config / "config" / "specli" / "profiles"
+        profiles_dir.mkdir(parents=True, exist_ok=True)
+        spec_path = isolated_config / "petstore.json"
+        with open(FIXTURES_DIR / "petstore_3.0.json") as f:
+            spec_path.write_text(f.read())
+        profile: dict[str, Any] = {
+            "name": "api-login-test",
+            "spec": str(spec_path),
+            "base_url": "http://localhost:8080",
+        }
+        if api_login:
+            profile["auth"] = {
+                "type": "api_login",
+                "header": "X-API-Key",
+                "location": "header",
+                "check_endpoint": "/me",
+                "credential_name": "api-login-test",
+            }
+        (profiles_dir / "api-login-test.json").write_text(json.dumps(profile))
+        return "api-login-test"
+
+    def test_api_login_generates_login_and_logout(
+        self,
+        isolated_config: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("specli.config._is_xdg_platform", lambda: True)
+        name = self._write_profile(isolated_config, api_login=True)
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        result = runner.invoke(
+            app,
+            [
+                "build", "generate",
+                "--profile", name,
+                "--name", "ali",
+                "--output", str(output_dir),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        cli_source = (output_dir / "ali" / "src" / "ali" / "cli.py").read_text(
+            encoding="utf-8"
+        )
+        assert "@app.command(\"login\")" in cli_source
+        assert "@app.command(\"logout\")" in cli_source
+        assert "APILoginPlugin" in cli_source
+
+    def test_non_api_login_skips_login_and_logout(
+        self,
+        isolated_config: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("specli.config._is_xdg_platform", lambda: True)
+        name = self._write_profile(isolated_config, api_login=False)
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        result = runner.invoke(
+            app,
+            [
+                "build", "generate",
+                "--profile", name,
+                "--name", "plain",
+                "--output", str(output_dir),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        cli_source = (output_dir / "plain" / "src" / "plain" / "cli.py").read_text(
+            encoding="utf-8"
+        )
+        assert "APILoginPlugin" not in cli_source
+        assert "@app.command(\"login\")" not in cli_source
+
+
 class TestEntryTemplate:
     """Verify the entry template is valid Python after formatting."""
 
@@ -408,16 +546,47 @@ class TestEntryTemplate:
         source = _ENTRY_TEMPLATE.format(
             cli_name="test-cli",
             profile_name=_profile_on_disk,
-            spec_source=profile.spec,
+            spec_source=str(profile.spec).replace("\\", "/"),
             frozen_spec_repr=repr(json.dumps(raw_spec)),
             frozen_profile_repr=repr(json.dumps(profile_data)),
             cli_name_repr=repr("test-cli"),
             cli_version_repr=repr("1.0.0"),
             cli_help_repr=repr("Test CLI"),
+            api_login_block="",
         )
 
         # Should compile without SyntaxError
         compile(source, "<test-entry>", "exec")
+
+    def test_template_with_api_login_block_is_valid_python(
+        self,
+        isolated_config: Path,
+        _profile_on_disk: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Rendered template with the api_login block must also compile."""
+        monkeypatch.setattr("specli.config._is_xdg_platform", lambda: True)
+        from specli.config import load_profile
+        from specli.parser import load_spec
+        from specli.plugins.build.plugin import _API_LOGIN_BLOCK, _ENTRY_TEMPLATE
+
+        profile = load_profile(_profile_on_disk)
+        raw_spec = load_spec(profile.spec)
+        profile_data = profile.model_dump(mode="json")
+
+        source = _ENTRY_TEMPLATE.format(
+            cli_name="test-cli",
+            profile_name=_profile_on_disk,
+            spec_source=str(profile.spec).replace("\\", "/"),
+            frozen_spec_repr=repr(json.dumps(raw_spec)),
+            frozen_profile_repr=repr(json.dumps(profile_data)),
+            cli_name_repr=repr("test-cli"),
+            cli_version_repr=repr("1.0.0"),
+            cli_help_repr=repr("Test CLI"),
+            api_login_block=_API_LOGIN_BLOCK,
+        )
+
+        compile(source, "<test-entry-api-login>", "exec")
 
 
 # ---------------------------------------------------------------------------

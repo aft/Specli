@@ -24,9 +24,10 @@ unknown keys are preserved in ``model_extra``.
 from __future__ import annotations
 
 import enum
+from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 
 # --- Auth Config ---
@@ -56,8 +57,9 @@ class AuthConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     type: str = Field(
-        description="Auth type: api_key, bearer, basic, oauth2_client_credentials, "
-        "oauth2_auth_code, openid_connect, manual_token, browser_login, api_key_gen"
+        description="Auth type: api_key, api_login, bearer, basic, "
+        "oauth2_client_credentials, oauth2_auth_code, openid_connect, "
+        "manual_token, browser_login, api_key_gen"
     )
     header: Optional[str] = Field(
         default=None, description="Header name for api_key auth"
@@ -232,6 +234,8 @@ class Profile(BaseModel):
     auth: Optional[AuthConfig] = None
     path_rules: PathRulesConfig = Field(default_factory=PathRulesConfig)
     request: RequestConfig = Field(default_factory=RequestConfig)
+
+    _source_path: Optional[Path] = PrivateAttr(default=None)
 
 
 # --- Parser Output Models ---

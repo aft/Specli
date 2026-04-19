@@ -25,6 +25,7 @@ from specli.config import (
     profile_exists,
     resolve_config,
     resolve_credential,
+    resolve_profile_ref,
     save_global_config,
     save_profile,
 )
@@ -365,6 +366,117 @@ class TestProfiles:
 
         with pytest.raises(ConfigError, match="Invalid profile"):
             load_profile("bad")
+
+
+# ---------------------------------------------------------------------------
+# Profile references by path
+# ---------------------------------------------------------------------------
+
+
+class TestProfilePathRef:
+    """``-p`` / profile references may be a bare name or a direct file path."""
+
+    def test_resolve_bare_name_uses_profiles_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("specli.config._is_xdg_platform", lambda: True)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        save_profile(_make_profile("from-name"))
+        resolved = resolve_profile_ref("from-name")
+        assert resolved == (tmp_path / "specli" / "profiles" / "from-name.json").resolve()
+
+    def test_resolve_absolute_path(self, tmp_path: Path) -> None:
+        custom = tmp_path / "custom" / "frad.json"
+        custom.parent.mkdir(parents=True)
+        custom.write_text(json.dumps({"name": "frad", "spec": "x.json"}), encoding="utf-8")
+
+        resolved = resolve_profile_ref(str(custom))
+        assert resolved == custom.resolve()
+
+    def test_resolve_relative_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        local = tmp_path / "local.json"
+        local.write_text(json.dumps({"name": "local", "spec": "x.json"}), encoding="utf-8")
+
+        resolved = resolve_profile_ref("./local.json")
+        assert resolved == local.resolve()
+
+    def test_resolve_home_tilde(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        file = tmp_path / "tilde.json"
+        file.write_text(json.dumps({"name": "tilde", "spec": "x.json"}), encoding="utf-8")
+
+        resolved = resolve_profile_ref("~/tilde.json")
+        assert resolved == file.resolve()
+
+    def test_resolve_path_not_found_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ConfigError, match="Profile file not found"):
+            resolve_profile_ref(str(tmp_path / "missing.json"))
+
+    def test_resolve_name_not_found_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("specli.config._is_xdg_platform", lambda: True)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        with pytest.raises(ConfigError, match="not found"):
+            resolve_profile_ref("ghost")
+
+    def test_load_profile_from_direct_path(self, tmp_path: Path) -> None:
+        path = tmp_path / "direct.json"
+        data = {"name": "direct", "spec": "https://api.example.com/o.json"}
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+        profile = load_profile(str(path))
+        assert profile.name == "direct"
+        assert profile._source_path == path.resolve()
+
+    def test_save_profile_roundtrips_to_source_path(self, tmp_path: Path) -> None:
+        path = tmp_path / "rt.json"
+        path.write_text(
+            json.dumps({"name": "rt", "spec": "old.json"}),
+            encoding="utf-8",
+        )
+
+        profile = load_profile(str(path))
+        profile.spec = "new.json"
+        save_profile(profile)
+
+        reloaded_text = path.read_text(encoding="utf-8")
+        assert "new.json" in reloaded_text
+        assert not (tmp_path / "specli" / "profiles" / "rt.json").exists()
+
+    def test_save_profile_by_name_uses_profiles_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("specli.config._is_xdg_platform", lambda: True)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        profile = Profile(name="by-name", spec="x.json")
+        save_profile(profile)
+
+        expected = tmp_path / "specli" / "profiles" / "by-name.json"
+        assert expected.is_file()
+
+    def test_profile_exists_with_path(self, tmp_path: Path) -> None:
+        path = tmp_path / "here.json"
+        path.write_text(json.dumps({"name": "here", "spec": "x"}), encoding="utf-8")
+
+        assert profile_exists(str(path)) is True
+        assert profile_exists(str(tmp_path / "missing.json")) is False
+
+    def test_delete_profile_by_path(self, tmp_path: Path) -> None:
+        path = tmp_path / "doomed.json"
+        path.write_text(json.dumps({"name": "doomed", "spec": "x"}), encoding="utf-8")
+
+        delete_profile(str(path))
+        assert not path.exists()
 
 
 # ---------------------------------------------------------------------------

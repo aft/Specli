@@ -117,6 +117,7 @@ def create_default_manager() -> AuthManager:
 
     - ``api_key`` -- static API key in header or query param.
     - ``api_key_gen`` -- generated/rotated API keys.
+    - ``api_login`` -- interactive login/verify/persist (prompt once, reuse).
     - ``basic`` -- HTTP Basic authentication.
     - ``bearer`` -- static bearer token.
     - ``browser_login`` -- browser-based interactive login.
@@ -131,6 +132,7 @@ def create_default_manager() -> AuthManager:
     """
     from specli.plugins.api_key import APIKeyAuthPlugin
     from specli.plugins.api_key_gen import APIKeyGenPlugin
+    from specli.plugins.api_login import APILoginPlugin
     from specli.plugins.basic import BasicAuthPlugin
     from specli.plugins.bearer import BearerAuthPlugin
     from specli.plugins.browser_login import BrowserLoginPlugin
@@ -144,6 +146,7 @@ def create_default_manager() -> AuthManager:
 
     manager = AuthManager()
     manager.register(APIKeyAuthPlugin())
+    manager.register(APILoginPlugin())
     manager.register(BearerAuthPlugin())
     manager.register(BasicAuthPlugin())
     manager.register(OAuth2ClientCredentialsPlugin())

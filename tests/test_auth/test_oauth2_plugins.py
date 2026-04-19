@@ -775,12 +775,13 @@ class TestOpenIDConnectPlugin:
 
 
 class TestCreateDefaultManagerWithOAuth2:
-    def test_has_all_ten_types(self) -> None:
+    def test_has_all_builtin_types(self) -> None:
         manager = create_default_manager()
         types = manager.list_types()
-        assert len(types) == 10
+        assert len(types) == 11
         assert "api_key" in types
         assert "api_key_gen" in types
+        assert "api_login" in types
         assert "basic" in types
         assert "bearer" in types
         assert "browser_login" in types

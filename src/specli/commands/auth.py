@@ -407,8 +407,12 @@ def _scheme_to_auth_config(scheme):  # noqa: ANN001, ANN202
     from specli.models import AuthConfig
 
     if scheme.type == "apiKey":
+        # api_login is the interactive default: user runs `login` once,
+        # the key (+ optional secret) is verified and persisted, then
+        # reused on every request. Users who want non-interactive
+        # env/file/plain sourcing can still opt into `api_key` explicitly.
         return AuthConfig(
-            type="api_key",
+            type="api_login",
             header=scheme.param_name,
             location=scheme.location or "header",
         )

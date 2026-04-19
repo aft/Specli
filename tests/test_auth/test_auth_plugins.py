@@ -474,6 +474,7 @@ class TestCreateDefaultManager:
         assert manager.list_types() == [
             "api_key",
             "api_key_gen",
+            "api_login",
             "basic",
             "bearer",
             "browser_login",

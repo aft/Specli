@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-20
+
+### Added
+- `api_login` auth plugin: interactive prompt + live `check_endpoint` verification + persistent credential store. User runs `login` once; credentials are reused until `logout`. Supports optional dual-credential (key + secret) via `secret_name`.
+- Generated CLIs compiled/generated from profiles with `auth.type == "api_login"` now expose top-level `login` / `logout` subcommands. Login accepts `--key`, `--secret`, and `--no-verify` for CI.
+- `-p` / profile reference now accepts a full filesystem path (absolute, relative, or `~`-expanded) in addition to a bare name. Saves round-trip back to the source path.
+- `resolve_profile_ref()` helper and `Profile._source_path` private attribute for per-profile path tracking.
+
+### Changed
+- Interactive mapping of OpenAPI `apiKey` security schemes now defaults to `api_login` (was `api_key`). Existing profiles with `type: "api_key"` are unaffected.
+- Mid-session 401 on `api_login` fails loudly and does not re-prompt; user must run `logout` + `login` again.
+
+### Fixed
+- Generated entry files are now written as UTF-8, preventing encoding errors on Windows when specs contain non-ASCII characters.
+- Spec path in generated CLI docstrings is normalised to forward slashes so Windows paths do not collide with Python unicode escape syntax.
+
 ## [0.1.7] - 2026-02-26
 
 ### Fixed

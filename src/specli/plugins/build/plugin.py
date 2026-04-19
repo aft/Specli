@@ -45,6 +45,65 @@ from specli.output import error, info, success, suggest
 build_app = typer.Typer(no_args_is_help=True)
 
 
+# Top-level login/logout commands, injected into the generated CLI when the
+# profile uses the ``api_login`` auth type.  Because the surrounding entry
+# template is processed with ``str.format()``, literal ``{`` and ``}`` here
+# must be doubled (``{{`` / ``}}``) the same way they are in the main template.
+_API_LOGIN_BLOCK = '''\
+# ------------------------------------------------------------------ #
+# api_login: interactive login/logout
+# ------------------------------------------------------------------ #
+
+@app.command("login")
+def _api_login(
+    key: Optional[str] = typer.Option(
+        None, "--key",
+        help="Non-interactive key (skips prompt). Intended for CI.",
+    ),
+    secret: Optional[str] = typer.Option(
+        None, "--secret",
+        help="Non-interactive secret (skips prompt). Intended for CI.",
+    ),
+    no_verify: bool = typer.Option(
+        False, "--no-verify",
+        help="Skip the check_endpoint verification step.",
+    ),
+) -> None:
+    """Log in by providing credentials (verified against the server)."""
+    from specli.exceptions import AuthError
+    from specli.models import Profile
+    from specli.output import error as err, success as ok
+    from specli.plugins.api_login import APILoginPlugin
+
+    profile = Profile(**_FROZEN_PROFILE)
+    try:
+        APILoginPlugin().login(profile, key=key, secret=secret, verify=not no_verify)
+    except AuthError as exc:
+        err(str(exc))
+        raise typer.Exit(code=3)
+    ok("Logged in.")
+
+
+@app.command("logout")
+def _api_logout() -> None:
+    """Clear stored credentials."""
+    from specli.exceptions import AuthError
+    from specli.models import Profile
+    from specli.output import error as err, success as ok
+    from specli.plugins.api_login import APILoginPlugin
+
+    profile = Profile(**_FROZEN_PROFILE)
+    try:
+        APILoginPlugin().logout(profile)
+    except AuthError as exc:
+        err(str(exc))
+        raise typer.Exit(code=3)
+    ok("Logged out.")
+
+
+'''
+
+
 _ENTRY_TEMPLATE = '''\
 #!/usr/bin/env python3
 """Auto-generated CLI entry point for {cli_name}.
@@ -192,6 +251,7 @@ def auth_test() -> None:
 app.add_typer(auth_app, name="auth", help="Authentication.")
 
 
+{api_login_block}
 # ------------------------------------------------------------------ #
 # Dynamic API commands
 # ------------------------------------------------------------------ #
@@ -617,21 +677,27 @@ def build_compile(
     frozen_spec_json = json.dumps(raw_spec)
     frozen_profile_json = json.dumps(profile_data)
 
+    api_login_block = (
+        _API_LOGIN_BLOCK if profile.auth and profile.auth.type == "api_login" else ""
+    )
     entry_source = _ENTRY_TEMPLATE.format(
         cli_name=name,
         profile_name=profile_name,
-        spec_source=profile.spec,
+        # Use forward slashes so Windows paths don't look like \U escapes
+        # inside the generated docstring.
+        spec_source=str(profile.spec).replace("\\", "/"),
         frozen_spec_repr=repr(frozen_spec_json),
         frozen_profile_repr=repr(frozen_profile_json),
         cli_name_repr=repr(name),
         cli_version_repr=repr(cli_version),
         cli_help_repr=repr(cli_help),
+        api_login_block=api_login_block,
     )
 
     # 4. Write temp entry point and run PyInstaller
     build_dir = Path(tempfile.mkdtemp(prefix=f"specli-build-{name}-"))
     entry_file = build_dir / f"{name.replace('-', '_')}_entry.py"
-    entry_file.write_text(entry_source)
+    entry_file.write_text(entry_source, encoding="utf-8")
 
     info(f"Building {name}...")
 
@@ -888,22 +954,30 @@ def build_generate(
     frozen_spec_json = json.dumps(raw_spec)
     frozen_profile_json = json.dumps(profile_data)
 
+    api_login_block = (
+        _API_LOGIN_BLOCK if profile.auth and profile.auth.type == "api_login" else ""
+    )
     entry_source = _ENTRY_TEMPLATE.format(
         cli_name=name,
         profile_name=profile_name,
-        spec_source=profile.spec,
+        # Use forward slashes so Windows paths don't look like \U escapes
+        # inside the generated docstring.
+        spec_source=str(profile.spec).replace("\\", "/"),
         frozen_spec_repr=repr(frozen_spec_json),
         frozen_profile_repr=repr(frozen_profile_json),
         cli_name_repr=repr(name),
         cli_version_repr=repr(cli_version),
         cli_help_repr=repr(cli_help),
+        api_login_block=api_login_block,
     )
 
-    (src_dir / "__init__.py").write_text(f'"""Generated CLI: {name}."""\n')
-    (src_dir / "__main__.py").write_text(
-        f"from {pkg_name}.cli import main\n\nmain()\n"
+    (src_dir / "__init__.py").write_text(
+        f'"""Generated CLI: {name}."""\n', encoding="utf-8"
     )
-    (src_dir / "cli.py").write_text(entry_source)
+    (src_dir / "__main__.py").write_text(
+        f"from {pkg_name}.cli import main\n\nmain()\n", encoding="utf-8"
+    )
+    (src_dir / "cli.py").write_text(entry_source, encoding="utf-8")
 
     # Write pyproject.toml
     pyproject = f"""\
@@ -926,7 +1000,7 @@ dependencies = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/{pkg_name}"]
 """
-    (pkg_dir / "pyproject.toml").write_text(pyproject)
+    (pkg_dir / "pyproject.toml").write_text(pyproject, encoding="utf-8")
 
     success(f"Package generated: {pkg_dir}")
     suggest(f"Install it: pip install {pkg_dir}")

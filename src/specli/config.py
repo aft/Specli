@@ -218,8 +218,51 @@ def save_global_config(config: GlobalConfig) -> None:
 
 
 def _profile_path(name: str) -> Path:
-    """Path to a named profile's JSON file."""
+    """Path to a named profile's JSON file in the canonical profiles directory."""
     return get_profiles_dir() / f"{name}.json"
+
+
+def _looks_like_path(ref: str) -> bool:
+    """Return True if *ref* should be treated as a filesystem path rather than a profile name."""
+    if not ref:
+        return False
+    if ref.endswith(".json"):
+        return True
+    if ref.startswith(("~", ".", "/", "\\")):
+        return True
+    if "/" in ref or "\\" in ref:
+        return True
+    if Path(ref).expanduser().is_absolute():
+        return True
+    return False
+
+
+def resolve_profile_ref(ref: str) -> Path:
+    """Resolve a profile reference to an existing filesystem path.
+
+    Accepts either a bare profile name (looked up in ``get_profiles_dir()``)
+    or a direct path (absolute, relative, or ``~`` expansion). A reference is
+    treated as a path when it ends in ``.json``, starts with ``~``/``.``/``/``,
+    contains a path separator, or expands to an absolute path.
+
+    Args:
+        ref: Profile name or filesystem path.
+
+    Returns:
+        An absolute :class:`~pathlib.Path` to an existing file.
+
+    Raises:
+        ConfigError: If the file does not exist.
+    """
+    if _looks_like_path(ref):
+        path = Path(ref).expanduser().resolve()
+        if not path.is_file():
+            raise ConfigError(f"Profile file not found: {ref}")
+        return path
+    path = _profile_path(ref)
+    if not path.is_file():
+        raise ConfigError(f"Profile '{ref}' not found at {path}")
+    return path
 
 
 def list_profiles() -> list[str]:
@@ -234,67 +277,77 @@ def list_profiles() -> list[str]:
     )
 
 
-def load_profile(name: str) -> Profile:
-    """Load and validate a profile from disk.
+def load_profile(ref: str) -> Profile:
+    """Load and validate a profile from disk by name or path.
 
     Args:
-        name: Profile name (corresponds to ``<name>.json`` in the profiles
-            directory).
+        ref: Profile name (corresponds to ``<name>.json`` in the profiles
+            directory) or a direct filesystem path (absolute, relative, or
+            ``~``-expanded).
 
     Returns:
-        The deserialised :class:`~specli.models.Profile`.
+        The deserialised :class:`~specli.models.Profile`. The originating
+        path is attached as a private attribute so :func:`save_profile`
+        can write back to the same location.
 
     Raises:
         ConfigError: If the profile file does not exist, contains invalid
             JSON, or fails Pydantic validation.
     """
-    path = _profile_path(name)
-    if not path.is_file():
-        raise ConfigError(f"Profile '{name}' not found at {path}")
+    path = resolve_profile_ref(ref)
     try:
         text = path.read_text(encoding="utf-8")
         data = json.loads(text)
-        return Profile.model_validate(data)
+        profile = Profile.model_validate(data)
     except (json.JSONDecodeError, ValueError) as exc:
-        raise ConfigError(f"Invalid profile '{name}' at {path}: {exc}") from exc
+        raise ConfigError(f"Invalid profile at {path}: {exc}") from exc
+    profile._source_path = path
+    return profile
 
 
 def save_profile(profile: Profile) -> None:
-    """Persist a profile atomically to the profiles directory.
+    """Persist a profile atomically.
+
+    When the profile was loaded from a direct path via :func:`load_profile`,
+    it is written back to that same path. Otherwise it is written to
+    ``<profiles_dir>/<profile.name>.json``.
 
     Args:
-        profile: The profile to save. The file name is derived from
-            ``profile.name``.
+        profile: The profile to save.
     """
     data = profile.model_dump(mode="json")
-    _atomic_write(_profile_path(profile.name), json.dumps(data, indent=2) + "\n")
+    target = profile._source_path or _profile_path(profile.name)
+    _atomic_write(target, json.dumps(data, indent=2) + "\n")
+    profile._source_path = target
 
 
-def delete_profile(name: str) -> None:
-    """Delete a profile's JSON file from disk.
+def delete_profile(ref: str) -> None:
+    """Delete a profile's JSON file from disk by name or path.
 
     Args:
-        name: Profile name to delete.
+        ref: Profile name or filesystem path.
 
     Raises:
         ConfigError: If the profile does not exist.
     """
-    path = _profile_path(name)
-    if not path.is_file():
-        raise ConfigError(f"Profile '{name}' not found at {path}")
+    path = resolve_profile_ref(ref)
     path.unlink()
 
 
-def profile_exists(name: str) -> bool:
-    """Check whether a profile file exists on disk.
+def profile_exists(ref: str) -> bool:
+    """Check whether a profile exists on disk by name or path.
 
     Args:
-        name: Profile name to check.
+        ref: Profile name or filesystem path.
 
     Returns:
-        ``True`` if the profile's JSON file exists, ``False`` otherwise.
+        ``True`` if the referenced file exists, ``False`` otherwise.
     """
-    return _profile_path(name).is_file()
+    try:
+        resolve_profile_ref(ref)
+    except ConfigError:
+        return False
+    return True
 
 
 # --- Project-local config ---

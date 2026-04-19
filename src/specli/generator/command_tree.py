@@ -459,13 +459,13 @@ def _build_command_function(
                     f"    if {py_name} is not None:"
                 )
                 body_lines.append(
-                    f"        try:"
+                    "        try:"
                 )
                 body_lines.append(
                     f"            _body_fields[{prop_name!r}] = _json.loads({py_name})"
                 )
                 body_lines.append(
-                    f"        except (ValueError, TypeError):"
+                    "        except (ValueError, TypeError):"
                 )
                 body_lines.append(
                     f"            _body_fields[{prop_name!r}] = {py_name}"
@@ -508,10 +508,10 @@ def _build_command_function(
         # Validate required fields when nothing was provided.
         if body_schema_required:
             body_lines.append(
-                f"        _ctx = _click.get_current_context()"
+                "        _ctx = _click.get_current_context()"
             )
             body_lines.append(
-                f"        _typer.echo(_ctx.get_help())"
+                "        _typer.echo(_ctx.get_help())"
             )
             _req_names = ", ".join(body_schema_required)
             body_lines.append(
